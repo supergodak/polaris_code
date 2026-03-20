@@ -50,6 +50,12 @@ export function App({ agentLoop, version, modelName }: AppProps) {
           setActiveTool(null);
           break;
         case "thinking":
+          // Mark any active tool as done when returning to thinking
+          setActiveTool((prev) =>
+            prev && prev.status === "running"
+              ? { ...prev, status: "done" }
+              : prev,
+          );
           setStateLabel("Thinking...");
           break;
         case "tool_calling":

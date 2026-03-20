@@ -19,6 +19,7 @@ export class LLMClient {
     this.client = new OpenAI({
       baseURL: config.apiBase,
       apiKey: "not-needed", // mlx_lm.server doesn't require auth
+      timeout: 300_000, // 5 min timeout for local LLM (long prompts can be slow)
     });
     this.model = config.model;
     this.temperature = config.temperature;
