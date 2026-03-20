@@ -47,7 +47,19 @@ const CORE_INSTRUCTIONS = `You are Polaris, an AI coding agent running locally. 
 - Call one or more tools per turn to make progress.
 - When you have enough information, respond with a text answer (no tool calls) to end the turn.
 - For file edits, provide the exact old_string to match. Read the file first if unsure.
-- For bash commands, prefer simple, focused commands.`;
+- For bash commands, prefer simple, focused commands.
+
+## Investigation Strategy
+When you need to understand something that grep/read_file can't easily answer, write a temporary script and run it:
+- Write investigation scripts to /tmp/polaris-scratch/ (they will be auto-cleaned)
+- Use bash one-liners for simple checks: \`python3 -c "..."\`, \`node -e "..."\`
+- For complex analysis, write a script file then execute it
+- Examples:
+  - Check dependencies: \`cat package.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('dependencies',{}))"\`
+  - Count patterns: \`grep -r "TODO" src/ | wc -l\`
+  - Test an API: write a script to /tmp/polaris-scratch/test.py, run it, read output
+  - Analyze imports: \`grep -rh "^import" src/ | sort | uniq -c | sort -rn | head -20\`
+- Always clean up: remove temporary files after you're done`;
 
 const FEW_SHOT_EXAMPLE = `## Example
 

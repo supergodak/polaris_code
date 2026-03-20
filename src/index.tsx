@@ -16,6 +16,7 @@ import { editFileTool } from "./tools/edit-file.ts";
 import { globTool } from "./tools/glob.ts";
 import { grepTool } from "./tools/grep.ts";
 import { bashTool } from "./tools/bash.ts";
+import { runScriptTool } from "./tools/run-script.ts";
 import { createAskUserTool } from "./tools/ask-user.ts";
 import type { UserInteraction } from "./agent/types.ts";
 import { join } from "node:path";
@@ -122,6 +123,7 @@ registry.register(editFileTool);
 registry.register(globTool);
 registry.register(grepTool);
 registry.register(bashTool);
+registry.register(runScriptTool);
 registry.register(createAskUserTool(interaction));
 
 // Register memory tools
