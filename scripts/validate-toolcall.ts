@@ -124,11 +124,20 @@ for (let run = 0; run < TOTAL_RUNS; run++) {
     });
 
     const choice = response.choices[0];
-    const toolCalls = choice?.message?.tool_calls;
+    let toolCalls = choice?.message?.tool_calls;
+
+    // Fallback: parse tool calls from content (Qwen/Hermes XML format)
+    if ((!toolCalls || toolCalls.length === 0) && choice?.message?.content) {
+      const contentToolCalls = parseToolCallsFromText(choice.message.content);
+      if (contentToolCalls.length > 0) {
+        toolCalls = contentToolCalls;
+      }
+    }
 
     if (!toolCalls || toolCalls.length === 0) {
       totalFail++;
-      const reason = "No tool call generated (got text response)";
+      const content = choice?.message?.content?.slice(0, 100) ?? "";
+      const reason = `No tool call generated (got text: "${content}...")`;
       failures.push(`${runLabel}: ${reason}`);
       console.log(`  \x1b[31m✗\x1b[0m ${runLabel} — ${reason}`);
       continue;
@@ -204,3 +213,10 @@ if (failures.length > 0) {
 
 console.log();
 process.exit(passed ? 0 : 1);
+
+// --- Helper: reuse parseToolCallsFromContent from src/llm/stream.ts ---
+import { parseToolCallsFromContent } from "../src/llm/stream.ts";
+
+function parseToolCallsFromText(content: string) {
+  return parseToolCallsFromContent(content);
+}

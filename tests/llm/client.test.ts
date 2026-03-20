@@ -202,6 +202,94 @@ describe("LLMClient", () => {
   });
 });
 
+describe("parseToolCallsFromContent (via collectStream fallback)", () => {
+  it("parses <function> tags from content", async () => {
+    // Simulate a response where tool_calls is empty but content has <function> tags
+    async function* fakeStream(): AsyncGenerator<any> {
+      yield {
+        type: "text",
+        content: '<function>\n{"name": "read_file", "arguments": {"path": "src/main.ts"}}\n</function>',
+      };
+      yield { type: "done" };
+    }
+    const result = await collectStream(fakeStream());
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]!.function.name).toBe("read_file");
+    const args = JSON.parse(result.toolCalls[0]!.function.arguments);
+    expect(args.path).toBe("src/main.ts");
+    // Content should be stripped of the tag
+    expect(result.content).toBeFalsy();
+  });
+
+  it("parses <tool_call> tags", async () => {
+    async function* fakeStream(): AsyncGenerator<any> {
+      yield {
+        type: "text",
+        content: 'I will read the file.\n<tool_call>\n{"name": "grep", "arguments": {"pattern": "TODO"}}\n</tool_call>',
+      };
+      yield { type: "done" };
+    }
+    const result = await collectStream(fakeStream());
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]!.function.name).toBe("grep");
+    // Remaining text content should be preserved
+    expect(result.content).toContain("I will read the file.");
+  });
+
+  it("handles multiple tool calls in content", async () => {
+    async function* fakeStream(): AsyncGenerator<any> {
+      yield {
+        type: "text",
+        content: '<function>\n{"name": "grep", "arguments": {"pattern": "TODO"}}\n</function>\n<function>\n{"name": "read_file", "arguments": {"path": "x.ts"}}\n</function>',
+      };
+      yield { type: "done" };
+    }
+    const result = await collectStream(fakeStream());
+    expect(result.toolCalls).toHaveLength(2);
+    expect(result.toolCalls[0]!.function.name).toBe("grep");
+    expect(result.toolCalls[1]!.function.name).toBe("read_file");
+  });
+
+  it("parses <tools> tags (Qwen format)", async () => {
+    async function* fakeStream(): AsyncGenerator<any> {
+      yield {
+        type: "text",
+        content: '<tools>\n{"name": "read_file", "arguments": {"path": "src/main.ts"}}\n</tools>',
+      };
+      yield { type: "done" };
+    }
+    const result = await collectStream(fakeStream());
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]!.function.name).toBe("read_file");
+  });
+
+  it("parses ```json code blocks", async () => {
+    async function* fakeStream(): AsyncGenerator<any> {
+      yield {
+        type: "text",
+        content: '```json\n{"name": "bash", "arguments": {"command": "bun test"}}\n```',
+      };
+      yield { type: "done" };
+    }
+    const result = await collectStream(fakeStream());
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]!.function.name).toBe("bash");
+  });
+
+  it("parses bare JSON tool calls", async () => {
+    async function* fakeStream(): AsyncGenerator<any> {
+      yield {
+        type: "text",
+        content: '{"name": "grep", "arguments": {"pattern": "TODO", "path": "."}}',
+      };
+      yield { type: "done" };
+    }
+    const result = await collectStream(fakeStream());
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]!.function.name).toBe("grep");
+  });
+});
+
 describe("repairJSON", () => {
   it("fixes trailing comma", () => {
     const result = repairJSON('{"path": "test.ts",}');

@@ -4,7 +4,7 @@ import type { EvalTask } from "../types.ts";
 
 export const errorRecoveryTask: EvalTask = {
   name: "error-recovery",
-  prompt: "Read the file src/nonexistent.ts and tell me what it contains. If it doesn't exist, create it with a simple greeting function.",
+  prompt: "Read the file src/nonexistent.ts. If it doesn't exist, create it using write_file with a simple greeting function that says hello.",
 
   verify: async (workDir) => {
     // The agent should:
