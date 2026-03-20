@@ -2,5 +2,7 @@ node_modules/
 dist/
 .polaris/
 *.log
+*.jsonl
 .DS_Store
 package/
+bun.lock
