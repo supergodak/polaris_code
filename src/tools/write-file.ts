@@ -1,6 +1,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { ToolDefinition, ToolResult } from "./types.ts";
+import { validateStringArgs } from "./validate.ts";
 
 export const writeFileTool: ToolDefinition = {
   name: "write_file",
@@ -17,6 +18,8 @@ export const writeFileTool: ToolDefinition = {
   },
   permissionLevel: "confirm",
   handler: async (args): Promise<ToolResult> => {
+    const err = validateStringArgs(args, ["path", "content"]);
+    if (err) return err;
     const path = args.path as string;
     const content = args.content as string;
 

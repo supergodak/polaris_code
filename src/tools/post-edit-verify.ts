@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { extname } from "node:path";
 
@@ -19,9 +19,9 @@ export function postEditVerify(filePath: string): string | null {
 
       case ".ts":
       case ".tsx": {
-        // Quick syntax check with tsc (no emit)
         try {
-          execSync(`tsc --noEmit --pretty false "${filePath}" 2>&1`, {
+          // Use execFileSync with args array to prevent shell injection
+          execFileSync("tsc", ["--noEmit", "--pretty", "false", filePath], {
             encoding: "utf-8",
             timeout: 10_000,
             stdio: ["pipe", "pipe", "pipe"],
@@ -30,7 +30,6 @@ export function postEditVerify(filePath: string): string | null {
         } catch (e: unknown) {
           const err = e as { stdout?: string; stderr?: string };
           const output = (err.stdout ?? "") + (err.stderr ?? "");
-          // Extract first error line
           const firstError = output.split("\n").find((l) => l.includes("error"));
           return firstError ?? "TypeScript syntax error detected";
         }
@@ -38,10 +37,12 @@ export function postEditVerify(filePath: string): string | null {
 
       case ".py": {
         try {
-          execSync(
-            `python3 -c "import ast; ast.parse(open('${filePath}').read())" 2>&1`,
-            { encoding: "utf-8", timeout: 5_000, stdio: ["pipe", "pipe", "pipe"] },
-          );
+          // Use execFileSync with args array to prevent shell injection
+          execFileSync("python3", ["-c", `import ast,sys; ast.parse(open(sys.argv[1]).read())`, filePath], {
+            encoding: "utf-8",
+            timeout: 5_000,
+            stdio: ["pipe", "pipe", "pipe"],
+          });
           return null;
         } catch (e: unknown) {
           const err = e as { stderr?: string };
@@ -50,7 +51,7 @@ export function postEditVerify(filePath: string): string | null {
       }
 
       default:
-        return null; // No check for unknown file types
+        return null;
     }
   } catch {
     return null; // Don't block on verification failures

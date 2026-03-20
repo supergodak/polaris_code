@@ -1,5 +1,6 @@
 import { exec } from "node:child_process";
 import type { ToolDefinition, ToolResult } from "./types.ts";
+import { validateStringArgs } from "./validate.ts";
 
 const DEFAULT_TIMEOUT_MS = 120_000; // 2 minutes
 const MAX_OUTPUT_LENGTH = 50_000;
@@ -20,6 +21,8 @@ export const bashTool: ToolDefinition = {
   },
   permissionLevel: "confirm",
   handler: async (args): Promise<ToolResult> => {
+    const err = validateStringArgs(args, ["command"]);
+    if (err) return err;
     const command = args.command as string;
     const cwd = (args.cwd as string | undefined) ?? process.cwd();
     const timeout = (args.timeout as number | undefined) ?? DEFAULT_TIMEOUT_MS;

@@ -1,8 +1,9 @@
 import { execSync } from "node:child_process";
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import fg from "fast-glob";
 import type { ToolDefinition, ToolResult } from "./types.ts";
+import { validateStringArgs } from "./validate.ts";
 
 export interface GrepMatch {
   file: string;
@@ -26,6 +27,8 @@ export const grepTool: ToolDefinition = {
   },
   permissionLevel: "auto",
   handler: async (args): Promise<ToolResult> => {
+    const err = validateStringArgs(args, ["pattern"]);
+    if (err) return err;
     const pattern = args.pattern as string;
     const searchPath = (args.path as string | undefined) ?? ".";
     const include = args.include as string | undefined;

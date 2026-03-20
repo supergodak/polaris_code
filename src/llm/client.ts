@@ -133,23 +133,19 @@ export class LLMClient {
     // Handle incomplete stream: tool calls buffered but no finish_reason received
     if (toolCallBuffers.size > 0 && !toolCallsEmitted) {
       for (const [, buf] of toolCallBuffers) {
-        if (buf.id && buf.name && buf.arguments) {
-          // Validate JSON completeness
-          try {
-            JSON.parse(buf.arguments);
-          } catch {
-            yield {
-              type: "tool_call_end",
-              toolCall: {
-                id: buf.id,
-                type: "function",
-                function: {
-                  name: buf.name,
-                  arguments: buf.arguments, // May be incomplete - loop.ts will handle
-                },
+        if (buf.id && buf.name) {
+          // Emit regardless of JSON validity - loop.ts will attempt repair
+          yield {
+            type: "tool_call_end",
+            toolCall: {
+              id: buf.id,
+              type: "function",
+              function: {
+                name: buf.name,
+                arguments: buf.arguments || "{}",
               },
-            };
-          }
+            },
+          };
         }
       }
     }

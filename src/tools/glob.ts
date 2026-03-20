@@ -1,5 +1,6 @@
 import fg from "fast-glob";
 import type { ToolDefinition, ToolResult } from "./types.ts";
+import { validateStringArgs } from "./validate.ts";
 
 export const globTool: ToolDefinition = {
   name: "glob",
@@ -16,6 +17,8 @@ export const globTool: ToolDefinition = {
   },
   permissionLevel: "auto",
   handler: async (args): Promise<ToolResult> => {
+    const err = validateStringArgs(args, ["pattern"]);
+    if (err) return err;
     const pattern = args.pattern as string;
     const cwd = (args.cwd as string | undefined) ?? process.cwd();
 

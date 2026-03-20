@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type { ToolDefinition, ToolResult, EditDiagnostics } from "./types.ts";
+import { validateStringArgs } from "./validate.ts";
 
 export const editFileTool: ToolDefinition = {
   name: "edit_file",
@@ -18,6 +19,8 @@ export const editFileTool: ToolDefinition = {
   },
   permissionLevel: "confirm",
   handler: async (args): Promise<ToolResult> => {
+    const err = validateStringArgs(args, ["path", "old_string", "new_string"]);
+    if (err) return err;
     const path = args.path as string;
     const oldString = args.old_string as string;
     const newString = args.new_string as string;
@@ -90,8 +93,6 @@ export const editFileTool: ToolDefinition = {
 };
 
 // --- Helper functions ---
-
-const INVISIBLE_CHARS = /[\u200B\uFEFF\u00A0\u200C\u200D]/g;
 
 function normalizeWhitespace(text: string): string {
   return text

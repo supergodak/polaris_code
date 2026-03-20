@@ -57,7 +57,6 @@ export class AgentLoop extends EventEmitter {
     this.setState({ type: "thinking" });
 
     let iterations = 0;
-    const maxRetries = 3;
 
     while (iterations < this.config.maxIterations) {
       iterations++;
@@ -105,7 +104,7 @@ export class AgentLoop extends EventEmitter {
 
       // Process each tool call
       for (const tc of toolCalls) {
-        const result = await this.processToolCall(tc, maxRetries);
+        const result = await this.processToolCall(tc);
         this.messages.push({
           role: "tool",
           content: result.output || result.error || "(no output)",
@@ -124,7 +123,7 @@ export class AgentLoop extends EventEmitter {
     return msg;
   }
 
-  private async processToolCall(tc: ToolCall, maxRetries: number): Promise<ToolResult> {
+  private async processToolCall(tc: ToolCall): Promise<ToolResult> {
     const toolName = tc.function.name;
     const tool = this.registry.get(toolName);
 
@@ -177,13 +176,16 @@ export class AgentLoop extends EventEmitter {
     }
 
     if (tool.permissionLevel === "confirm") {
-      this.setState({
-        type: "awaiting_permission",
-        toolName,
-        args,
-        resolve: () => {},
+      const approved = await new Promise<boolean>((resolve) => {
+        this.setState({
+          type: "awaiting_permission",
+          toolName,
+          args,
+          resolve,
+        });
+        // Also notify interaction adapter (for headless mode)
+        this.interaction.requestPermission(toolName, args).then(resolve);
       });
-      const approved = await this.interaction.requestPermission(toolName, args);
       if (!approved) {
         return { success: false, output: `User denied execution of '${toolName}'.`, error: "USER_DENIED" };
       }

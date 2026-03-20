@@ -1,5 +1,6 @@
 import { readFileSync, statSync } from "node:fs";
 import type { ToolDefinition, ToolResult } from "./types.ts";
+import { validateStringArgs } from "./validate.ts";
 
 const DEFAULT_MAX_LINES = 500;
 
@@ -21,6 +22,8 @@ export const readFileTool: ToolDefinition = {
   },
   permissionLevel: "auto",
   handler: async (args): Promise<ToolResult> => {
+    const err = validateStringArgs(args, ["path"]);
+    if (err) return err;
     const path = args.path as string;
     const startLine = (args.start_line as number | undefined) ?? 1;
     const maxLines = (args.max_lines as number | undefined) ?? DEFAULT_MAX_LINES;
