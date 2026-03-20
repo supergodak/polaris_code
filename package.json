@@ -17,6 +17,7 @@
     "@types/node": "^22",
     "@types/react": "^19",
     "ink-testing-library": "^4",
+    "react-devtools-core": "^7.0.1",
     "typescript": "^5",
     "vitest": "^3"
   },
