@@ -61,11 +61,22 @@ When you need to understand something that grep/read_file can't easily answer, w
   - Analyze imports: \`grep -rh "^import" src/ | sort | uniq -c | sort -rn | head -20\`
 - Always clean up: remove temporary files after you're done`;
 
-const FEW_SHOT_EXAMPLE = `## Example
+const FEW_SHOT_EXAMPLE = `## How to call tools
 
+To call a tool, output a JSON object with "name" and "arguments" fields inside a <tool_call> tag:
+
+<tool_call>
+{"name": "read_file", "arguments": {"path": "src/main.ts"}}
+</tool_call>
+
+You can also use <function> or <tools> tags. Do NOT describe the call in natural language — output the tag directly.
+
+Example:
 User: "main.tsの内容を見せて"
-Assistant: I'll read the file for you.
-[calls read_file with {"path": "src/main.ts"}]`;
+Assistant:
+<tool_call>
+{"name": "read_file", "arguments": {"path": "src/main.ts"}}
+</tool_call>`;
 
 const ERROR_RECOVERY_INSTRUCTIONS = `## Error Recovery
 - If a tool call fails, read the error message carefully.

@@ -8,10 +8,11 @@ interface InputProps {
 
 /**
  * Text input with multiline support.
- * - Enter: submit (if content is non-empty)
- * - Shift+Enter or Ctrl+J: insert newline
+ * - Enter: submit (unless line ends with \, which inserts a newline)
  * - Backspace: delete last character
  * - Ctrl+U: clear input
+ *
+ * For multiline input, end a line with \ then press Enter.
  */
 export function Input({ onSubmit, disabled = false }: InputProps) {
   const [value, setValue] = useState("");
@@ -19,14 +20,13 @@ export function Input({ onSubmit, disabled = false }: InputProps) {
   useInput((input, key) => {
     if (disabled) return;
 
-    // Ctrl+J or Shift+Enter → insert newline
-    if ((key.ctrl && input === "j") || (key.shift && key.return)) {
-      setValue((v) => v + "\n");
-      return;
-    }
-
-    // Enter → submit
+    // Enter
     if (key.return) {
+      // If line ends with \, treat as line continuation
+      if (value.endsWith("\\")) {
+        setValue((v) => v.slice(0, -1) + "\n");
+        return;
+      }
       if (value.trim()) {
         onSubmit(value.trim());
         setValue("");
@@ -53,16 +53,14 @@ export function Input({ onSubmit, disabled = false }: InputProps) {
     }
   });
 
-  // Display: show ↵ for newlines in the input
   const displayLines = value.split("\n");
-  const isMultiline = displayLines.length > 1;
 
   return (
     <Box flexDirection="column">
       {displayLines.map((line, i) => (
         <Box key={i}>
           <Text color="cyan" bold>
-            {disabled ? "  " : i === 0 ? "❯ " : "  "}
+            {disabled ? "  " : i === 0 ? "❯ " : "… "}
           </Text>
           <Text>{line}</Text>
           {i === displayLines.length - 1 && !disabled && (
@@ -70,11 +68,6 @@ export function Input({ onSubmit, disabled = false }: InputProps) {
           )}
         </Box>
       ))}
-      {!disabled && isMultiline && (
-        <Text color="gray" dimColor>
-          {"  (Ctrl+J: newline, Enter: submit)"}
-        </Text>
-      )}
     </Box>
   );
 }

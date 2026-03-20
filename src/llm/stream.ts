@@ -83,6 +83,26 @@ export async function collectStream(
 export function parseToolCallsFromContent(content: string): ToolCall[] {
   const toolCalls: ToolCall[] = [];
 
+  // Pattern 0: [calls tool_name with {...}] (mimicked from older prompts)
+  const bracketPattern = /\[calls\s+(\w+)\s+with\s+(\{[\s\S]*?\})\s*\]/g;
+  let bracketMatch: RegExpExecArray | null;
+  while ((bracketMatch = bracketPattern.exec(content)) !== null) {
+    const name = bracketMatch[1]!;
+    const argsStr = bracketMatch[2]!;
+    try {
+      const args = JSON.parse(argsStr);
+      toolCalls.push({
+        id: `call_${Math.random().toString(36).slice(2, 10)}`,
+        type: "function",
+        function: {
+          name,
+          arguments: JSON.stringify(args),
+        },
+      });
+    } catch {}
+  }
+  if (toolCalls.length > 0) return toolCalls;
+
   // Pattern 1: XML tags (<function>, <tool_call>, <tools>)
   const tagPatterns = [
     /<function>\s*([\s\S]*?)\s*<\/function>/g,
@@ -172,6 +192,7 @@ function extractJsonObject(text: string, startIdx: number): string | null {
 
 export function stripToolCallTags(content: string): string {
   return content
+    .replace(/\[calls\s+\w+\s+with\s+\{[\s\S]*?\}\s*\]/g, "")
     .replace(/<function>\s*[\s\S]*?\s*<\/function>/g, "")
     .replace(/<tool_call>\s*[\s\S]*?\s*<\/tool_call>/g, "")
     .replace(/<tools>\s*[\s\S]*?\s*<\/tools>/g, "")
