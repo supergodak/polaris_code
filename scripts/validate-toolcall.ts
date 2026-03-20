@@ -143,7 +143,8 @@ for (let run = 0; run < TOTAL_RUNS; run++) {
       continue;
     }
 
-    const tc = toolCalls[0]!;
+    const rawTc = toolCalls[0]! as { id?: string; type?: string; function: { name: string; arguments: string } };
+    const tc = rawTc;
     let passed = true;
     let reason = "";
 

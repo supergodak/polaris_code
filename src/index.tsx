@@ -129,6 +129,14 @@ for (const tool of createMemoryTools(memoryStore)) {
   registry.register(tool);
 }
 
+// Apply permission overrides from config
+for (const [toolName, level] of Object.entries(config.permissions)) {
+  const tool = registry.get(toolName);
+  if (tool) {
+    tool.permissionLevel = level;
+  }
+}
+
 // Create agent loop
 const agentLoop = new AgentLoop(client, registry, interaction, logger, {
   maxIterations: config.agent.maxIterations,

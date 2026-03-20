@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, resolve } from "node:path";
 import fg from "fast-glob";
 import type { ToolDefinition, ToolResult } from "./types.ts";
 import { validateStringArgs } from "./validate.ts";
@@ -99,8 +99,13 @@ function searchWithRipgrep(pattern: string, path: string, include?: string): Gre
     try {
       const parsed = JSON.parse(line);
       if (parsed.type === "match") {
+        // Normalize to relative path from cwd
+        const rawPath = parsed.data.path.text as string;
+        const normalized = rawPath.startsWith("/")
+          ? relative(process.cwd(), rawPath)
+          : rawPath;
         matches.push({
-          file: parsed.data.path.text,
+          file: normalized,
           line: parsed.data.line_number,
           content: parsed.data.lines.text.trimEnd(),
         });
@@ -126,8 +131,11 @@ async function searchWithBuiltin(pattern: string, path: string, include?: string
     absolute: false,
   });
 
+  const basePath = path === "." ? process.cwd() : resolve(path);
+
   for (const file of files) {
-    const fullPath = path === "." ? file : join(path, file);
+    const fullPath = join(basePath, file);
+    const displayPath = relative(process.cwd(), fullPath);
     try {
       const content = readFileSync(fullPath, "utf-8");
       if (content.includes("\0")) continue; // Skip binary
@@ -136,7 +144,7 @@ async function searchWithBuiltin(pattern: string, path: string, include?: string
       for (let i = 0; i < lines.length; i++) {
         if (regex.test(lines[i]!)) {
           matches.push({
-            file: fullPath,
+            file: displayPath,
             line: i + 1,
             content: lines[i]!.trimEnd(),
           });
