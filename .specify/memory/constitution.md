@@ -1,50 +1,44 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+# Polaris Coding Agent Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. AI-First, Human-Directs
+人間はコードを書かない。人間は意図・要件・フィードバックを伝え、AIが探索・設計・実装・検証を全て自律的に行う。人間はdiffの承認と方向性の指示のみ。
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+### II. Local-First
+全てのLLM推論はローカルマシン（M5 Max 128GB）上で実行する。外部APIへの依存は排除する。MLXをプライマリ推論エンジンとし、32B〜70Bクラスのコーディング特化モデルを使用する。
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### III. Tool-Driven Agent Loop
+エージェントはReAct（Reasoning + Acting）パターンで動作する。思考→ツール実行→観察のループを自律的に回し、タスク完了まで自走する。ツールセットはシンプルに保ち、必要最小限から始める。
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### IV. Backend-Agnostic
+LLMバックエンドは差し替え可能な抽象化レイヤーを持つ。MLX, llama.cpp, OpenAI互換APIなど、複数のバックエンドに対応できる設計とする。
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### V. Permission-Gated Execution
+破壊的操作（ファイル削除、git push、外部通信等）は必ず人間の承認を得てから実行する。読み取り系操作は自動許可。
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+### VI. Simplicity Over Completeness
+機能は必要になった時に追加する（YAGNI）。Claude Codeの全機能を再現するのではなく、コーディングエージェントとして実用的な最小限から始める。
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+## Technology Stack
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+- **言語**: TypeScript 5.x
+- **ランタイム**: Bun（開発・ビルド・テスト・バイナリコンパイル）
+- **TUI**: Ink (React for CLI)
+- **LLM推論サーバー**: mlx-lm（プライマリ）、OpenAI互換API（セカンダリ）
+- **APIクライアント**: openai (Node.js SDK)
+- **テスト**: vitest
+- **対象モデル**: Qwen3-Coder系, Qwen2.5-Coder-32B, DeepSeek-Coder等
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+## Development Workflow
+
+- Spec-Driven Development (GitHub Spec Kit) に従う
+- テストは実装と同時に書く
+- 各フェーズでレビューゲートを設ける
+- Claude Code による完全AI駆動開発
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+本Constitutionはプロジェクトの全ての設計判断の基盤となる。変更には明示的な議論と承認を要する。
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Version**: 2.0.0 | **Ratified**: 2026-03-20 | **Last Amended**: 2026-03-20
