@@ -1,11 +1,10 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Box, Text, useApp } from "ink";
 import { Chat } from "./Chat.tsx";
 import { Input } from "./Input.tsx";
 import { Spinner } from "./Spinner.tsx";
 import { ToolCallDisplay } from "./ToolCall.tsx";
 import { Permission } from "./Permission.tsx";
-import { theme } from "./theme.ts";
 import type { AgentLoop } from "../agent/loop.ts";
 import type { AgentState } from "../agent/types.ts";
 
@@ -24,8 +23,6 @@ interface ActiveToolCall {
   name: string;
   args: Record<string, unknown>;
   status: "running" | "done" | "error";
-  result?: string;
-  durationMs?: number;
 }
 
 interface PendingPermission {
@@ -39,8 +36,25 @@ export function App({ agentLoop, version, modelName }: AppProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [stateLabel, setStateLabel] = useState("");
+  const [streamingText, setStreamingText] = useState(""); // Live streaming content
   const [activeTool, setActiveTool] = useState<ActiveToolCall | null>(null);
   const [pendingPermission, setPendingPermission] = useState<PendingPermission | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Elapsed time counter
+  useEffect(() => {
+    if (isProcessing) {
+      setElapsed(0);
+      timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [isProcessing]);
 
   useEffect(() => {
     const handleState = (state: AgentState) => {
@@ -48,15 +62,16 @@ export function App({ agentLoop, version, modelName }: AppProps) {
         case "idle":
           setStateLabel("");
           setActiveTool(null);
+          setStreamingText("");
           break;
         case "thinking":
-          // Mark any active tool as done when returning to thinking
           setActiveTool((prev) =>
             prev && prev.status === "running"
               ? { ...prev, status: "done" }
               : prev,
           );
           setStateLabel("Thinking...");
+          setStreamingText("");
           break;
         case "tool_calling":
           setActiveTool({
@@ -64,7 +79,8 @@ export function App({ agentLoop, version, modelName }: AppProps) {
             args: state.args,
             status: "running",
           });
-          setStateLabel(`Calling ${state.toolName}...`);
+          setStreamingText("");
+          setStateLabel("");
           break;
         case "awaiting_permission":
           setPendingPermission({
@@ -77,7 +93,11 @@ export function App({ agentLoop, version, modelName }: AppProps) {
           setStateLabel(`Running ${state.toolName}...`);
           break;
         case "responding":
+          // Live streaming text update
           setStateLabel("");
+          if (state.content) {
+            setStreamingText(state.content);
+          }
           break;
       }
     };
@@ -101,15 +121,11 @@ export function App({ agentLoop, version, modelName }: AppProps) {
       if (cmd === "help") {
         setMessages((prev) => [
           ...prev,
-          {
-            role: "assistant" as const,
-            content: "Commands: /quit, /clear, /help, /memory",
-          },
+          { role: "assistant" as const, content: "Commands: /quit, /clear, /help, /memory" },
         ]);
         return;
       }
       if (cmd === "memory") {
-        // Trigger memory_list tool
         setMessages((prev) => [...prev, { role: "user" as const, content: text }]);
         setIsProcessing(true);
         const result = await agentLoop.run("List all saved memories");
@@ -121,8 +137,11 @@ export function App({ agentLoop, version, modelName }: AppProps) {
 
     setMessages((prev) => [...prev, { role: "user" as const, content: text }]);
     setIsProcessing(true);
+    setStreamingText("");
 
     const result = await agentLoop.run(text);
+
+    setStreamingText("");
     setMessages((prev) => [...prev, { role: "assistant" as const, content: result }]);
     setIsProcessing(false);
   }, [agentLoop, exit]);
@@ -134,13 +153,13 @@ export function App({ agentLoop, version, modelName }: AppProps) {
     }
   }, [pendingPermission]);
 
+  const elapsedStr = elapsed > 0 ? ` (${elapsed}s)` : "";
+
   return (
     <Box flexDirection="column" padding={1}>
       {/* Header */}
       <Box marginBottom={1}>
-        <Text color="magenta" bold>
-          Polaris
-        </Text>
+        <Text color="magenta" bold>Polaris</Text>
         <Text color="gray"> v{version} </Text>
         <Text color="gray">({modelName})</Text>
       </Box>
@@ -148,14 +167,21 @@ export function App({ agentLoop, version, modelName }: AppProps) {
       {/* Chat messages */}
       <Chat messages={messages} />
 
+      {/* Live streaming response */}
+      {streamingText && (
+        <Box>
+          <Text color="white" bold>{"◆ "}</Text>
+          <Text>{streamingText}</Text>
+          <Text color="gray">▍</Text>
+        </Box>
+      )}
+
       {/* Active tool call */}
       {activeTool && (
         <ToolCallDisplay
           name={activeTool.name}
           args={activeTool.args}
           status={activeTool.status}
-          result={activeTool.result}
-          durationMs={activeTool.durationMs}
         />
       )}
 
@@ -168,8 +194,10 @@ export function App({ agentLoop, version, modelName }: AppProps) {
         />
       )}
 
-      {/* Status */}
-      {isProcessing && stateLabel && <Spinner label={stateLabel} />}
+      {/* Status with elapsed time */}
+      {isProcessing && stateLabel && (
+        <Spinner label={`${stateLabel}${elapsedStr}`} />
+      )}
 
       {/* Input */}
       <Box marginTop={1}>

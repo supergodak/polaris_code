@@ -28,7 +28,7 @@ const DEFAULTS: PolarisConfig = {
     apiBase: "http://localhost:8080/v1",
     model: "default",
     temperature: 0.1,
-    maxTokens: 4096,
+    maxTokens: 2048,
   },
   agent: {
     maxIterations: 25,
