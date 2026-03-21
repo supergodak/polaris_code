@@ -57,10 +57,11 @@ export class LLMClient {
       const delta = chunk.choices[0]?.delta;
       if (!delta) continue;
 
-      // Text content
-      if (delta.content) {
+      // Text content (also check 'reasoning' field for thinking models like Qwen3.5)
+      const textContent = delta.content || (delta as Record<string, unknown>).reasoning as string | undefined;
+      if (textContent) {
         hasContent = true;
-        yield { type: "text", content: delta.content };
+        yield { type: "text", content: textContent };
       }
 
       // Tool calls (may arrive across multiple chunks)
