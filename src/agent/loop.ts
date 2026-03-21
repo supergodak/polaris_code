@@ -17,6 +17,9 @@ export interface AgentLoopConfig {
   memoryContext?: string;
 }
 
+// Tools that are blocked in plan mode (read-only mode)
+const WRITE_TOOLS = new Set(["write_file", "edit_file", "bash", "run_script"]);
+
 export class AgentLoop extends EventEmitter {
   private messages: Message[] = [];
   private client: LLMClient;
@@ -24,6 +27,7 @@ export class AgentLoop extends EventEmitter {
   private interaction: UserInteraction;
   private logger: Logger;
   private config: AgentLoopConfig;
+  private _planMode = false;
 
   constructor(
     client: LLMClient,
@@ -52,8 +56,21 @@ export class AgentLoop extends EventEmitter {
     this.emit("state", state);
   }
 
+  get planMode(): boolean {
+    return this._planMode;
+  }
+
+  setPlanMode(enabled: boolean): void {
+    this._planMode = enabled;
+    this.emit("mode", enabled ? "plan" : "execute");
+  }
+
   async run(userMessage: string): Promise<string> {
-    this.messages.push({ role: "user", content: userMessage });
+    // In plan mode, prepend instruction to only analyze/plan
+    const effectiveMessage = this._planMode
+      ? `[PLAN MODE - read-only, no file changes allowed]\n${userMessage}`
+      : userMessage;
+    this.messages.push({ role: "user", content: effectiveMessage });
     this.setState({ type: "thinking" });
 
     let iterations = 0;
@@ -126,6 +143,15 @@ export class AgentLoop extends EventEmitter {
   private async processToolCall(tc: ToolCall): Promise<ToolResult> {
     const toolName = tc.function.name;
     const tool = this.registry.get(toolName);
+
+    // Plan mode: block write tools
+    if (this._planMode && WRITE_TOOLS.has(toolName)) {
+      return {
+        success: false,
+        output: `[PLAN MODE] Tool '${toolName}' is not available in plan mode. Use /do to switch to execution mode.`,
+        error: "PLAN_MODE_BLOCKED",
+      };
+    }
 
     // Unknown tool
     if (!tool) {

@@ -40,6 +40,7 @@ export function App({ agentLoop, version, modelName }: AppProps) {
   const [activeTool, setActiveTool] = useState<ActiveToolCall | null>(null);
   const [pendingPermission, setPendingPermission] = useState<PendingPermission | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [mode, setMode] = useState<"execute" | "plan">("execute");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Elapsed time counter
@@ -102,8 +103,14 @@ export function App({ agentLoop, version, modelName }: AppProps) {
       }
     };
 
+    const handleMode = (m: string) => setMode(m as "plan" | "execute");
+
     agentLoop.on("state", handleState);
-    return () => { agentLoop.off("state", handleState); };
+    agentLoop.on("mode", handleMode);
+    return () => {
+      agentLoop.off("state", handleState);
+      agentLoop.off("mode", handleMode);
+    };
   }, [agentLoop]);
 
   const handleSubmit = useCallback(async (text: string) => {
@@ -121,7 +128,23 @@ export function App({ agentLoop, version, modelName }: AppProps) {
       if (cmd === "help") {
         setMessages((prev) => [
           ...prev,
-          { role: "assistant" as const, content: "Commands: /quit, /clear, /help, /memory" },
+          { role: "assistant" as const, content: "Commands: /plan, /do, /quit, /clear, /help, /memory" },
+        ]);
+        return;
+      }
+      if (cmd === "plan") {
+        agentLoop.setPlanMode(true);
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant" as const, content: "Plan mode: read-only. Use /do to switch to execution mode." },
+        ]);
+        return;
+      }
+      if (cmd === "do" || cmd === "execute") {
+        agentLoop.setPlanMode(false);
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant" as const, content: "Execution mode: all tools available." },
         ]);
         return;
       }
@@ -162,6 +185,9 @@ export function App({ agentLoop, version, modelName }: AppProps) {
         <Text color="magenta" bold>Polaris</Text>
         <Text color="gray"> v{version} </Text>
         <Text color="gray">({modelName})</Text>
+        {mode === "plan" && (
+          <Text color="yellow" bold>{" "}[PLAN]</Text>
+        )}
       </Box>
 
       {/* Chat messages */}
