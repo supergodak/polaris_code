@@ -4,7 +4,8 @@ export type AgentState =
   | { type: "tool_calling"; toolName: string; args: Record<string, unknown> }
   | { type: "awaiting_permission"; toolName: string; args: Record<string, unknown>; resolve: (approved: boolean) => void }
   | { type: "executing"; toolName: string }
-  | { type: "responding"; content: string };
+  | { type: "responding"; content: string }
+  | { type: "tool_output"; toolName: string; chunk: string };
 
 export interface UserInteraction {
   ask(question: string): Promise<string>;

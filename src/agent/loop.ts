@@ -98,7 +98,16 @@ export class AgentLoop extends EventEmitter {
       iterations++;
 
       // Prune messages before sending (operate on copy)
-      const prunedMessages = pruneMessages(this.messages, this.config.maxContextTokens);
+      const pruneResult = pruneMessages(this.messages, this.config.maxContextTokens);
+      const prunedMessages = pruneResult.messages;
+
+      // Emit context info for UI
+      this.emit("context", {
+        tokens: pruneResult.tokensAfter,
+        maxTokens: this.config.maxContextTokens,
+        pruned: pruneResult.pruned,
+        tokensBefore: pruneResult.tokensBefore,
+      });
 
       const startTime = Date.now();
 
@@ -255,8 +264,13 @@ export class AgentLoop extends EventEmitter {
     this.setState({ type: "executing", toolName });
     const startTime = Date.now();
 
+    // Set up real-time output callback for tools that support it
+    tool.onOutput = (chunk: string) => {
+      this.emit("state", { type: "tool_output", toolName, chunk });
+    };
+
     try {
-      const result = await tool.handler(args);
+      const result = await tool.handler.call(tool, args);
       const durationMs = Date.now() - startTime;
       this.logger.toolCall(toolName, args, result, durationMs);
 
@@ -285,5 +299,55 @@ export class AgentLoop extends EventEmitter {
 
   getMessages(): Message[] {
     return [...this.messages];
+  }
+
+  restoreMessages(messages: Message[]): void {
+    this.messages = [...messages];
+  }
+
+  async compact(): Promise<{ before: number; after: number }> {
+    const { estimateTokens } = await import("../memory/loader.ts");
+    const before = this.messages.reduce(
+      (sum, m) => sum + estimateTokens(m.role === "assistant" ? (m.content ?? "") : m.content),
+      0,
+    );
+
+    // Keep system prompt
+    const systemMsg = this.messages.find((m) => m.role === "system");
+    if (!systemMsg) return { before, after: before };
+
+    // Build summary request
+    const conversationText = this.messages
+      .filter((m) => m.role !== "system")
+      .map((m) => `${m.role}: ${m.role === "assistant" ? (m.content ?? "(tool call)") : m.content}`)
+      .join("\n")
+      .slice(0, 8000); // Limit input
+
+    const summaryMessages: Message[] = [
+      { role: "system", content: "Summarize the following conversation concisely. Include key decisions, files modified, and current state. Be brief." },
+      { role: "user", content: conversationText },
+    ];
+
+    try {
+      const stream = this.client.chat(summaryMessages, []);
+      const result = await collectStream(stream);
+      const summary = result.content ?? "(no summary)";
+
+      // Replace conversation with summary
+      this.messages = [
+        systemMsg,
+        { role: "user", content: "[Previous conversation summary]" },
+        { role: "assistant", content: summary },
+      ];
+
+      const after = this.messages.reduce(
+        (sum, m) => sum + estimateTokens(m.role === "assistant" ? (m.content ?? "") : m.content),
+        0,
+      );
+
+      return { before, after };
+    } catch {
+      return { before, after: before };
+    }
   }
 }

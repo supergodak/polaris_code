@@ -1,4 +1,4 @@
-import { exec } from "node:child_process";
+import { spawn } from "node:child_process";
 import type { ToolDefinition, ToolResult } from "./types.ts";
 import { validateStringArgs } from "./validate.ts";
 
@@ -21,53 +21,75 @@ export const bashTool: ToolDefinition = {
     required: ["command"],
   },
   permissionLevel: "confirm",
-  handler: async (args): Promise<ToolResult> => {
+  handler: async function (this: ToolDefinition, args): Promise<ToolResult> {
     const err = validateStringArgs(args, ["command"]);
     if (err) return err;
     const command = args.command as string;
     const cwd = (args.cwd as string | undefined) ?? process.cwd();
     const timeout = (args.timeout as number | undefined) ?? DEFAULT_TIMEOUT_MS;
+    const onOutput = this?.onOutput;
 
     return new Promise((resolve) => {
-      exec(
-        command,
-        {
-          cwd,
-          timeout,
-          maxBuffer: 10 * 1024 * 1024,
-          encoding: "utf-8",
-          shell: SHELL,
-        },
-        (error, stdout, stderr) => {
-          let output = "";
-          if (stdout) output += stdout;
-          if (stderr) output += (output ? "\n" : "") + stderr;
+      const child = spawn(SHELL, ["-c", command], {
+        cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env },
+      });
 
-          // Truncate very long output
-          if (output.length > MAX_OUTPUT_LENGTH) {
-            output = output.slice(0, MAX_OUTPUT_LENGTH) +
-              `\n\n[OUTPUT TRUNCATED: ${output.length} chars total, showing first ${MAX_OUTPUT_LENGTH}]`;
-          }
+      const chunks: string[] = [];
+      let killed = false;
 
-          if (error) {
-            if (error.killed) {
-              resolve({
-                success: false,
-                output,
-                error: `Command timed out after ${timeout}ms`,
-              });
-            } else {
-              resolve({
-                success: false,
-                output,
-                error: `Exit code ${error.code}: ${error.message}`,
-              });
-            }
-          } else {
-            resolve({ success: true, output: output || "(no output)" });
-          }
-        },
-      );
+      const timer = setTimeout(() => {
+        killed = true;
+        child.kill("SIGKILL");
+      }, timeout);
+
+      child.stdout?.on("data", (data: Buffer) => {
+        const text = data.toString("utf-8");
+        chunks.push(text);
+        onOutput?.(text);
+      });
+
+      child.stderr?.on("data", (data: Buffer) => {
+        const text = data.toString("utf-8");
+        chunks.push(text);
+        onOutput?.(text);
+      });
+
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        let output = chunks.join("");
+
+        if (output.length > MAX_OUTPUT_LENGTH) {
+          output = output.slice(0, MAX_OUTPUT_LENGTH) +
+            `\n\n[OUTPUT TRUNCATED: ${output.length} chars total, showing first ${MAX_OUTPUT_LENGTH}]`;
+        }
+
+        if (killed) {
+          resolve({
+            success: false,
+            output,
+            error: `Command timed out after ${timeout}ms`,
+          });
+        } else if (code !== 0) {
+          resolve({
+            success: false,
+            output,
+            error: `Exit code ${code}`,
+          });
+        } else {
+          resolve({ success: true, output: output || "(no output)" });
+        }
+      });
+
+      child.on("error", (e) => {
+        clearTimeout(timer);
+        resolve({
+          success: false,
+          output: "",
+          error: `Spawn error: ${e.message}`,
+        });
+      });
     });
   },
 };

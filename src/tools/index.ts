@@ -17,6 +17,10 @@ export class ToolRegistry {
     this.standaloneTools.set(tool.name, tool);
   }
 
+  unregister(name: string): void {
+    this.standaloneTools.delete(name);
+  }
+
   get(name: string): ToolDefinition | undefined {
     return this.standaloneTools.get(name);
   }

@@ -1,6 +1,23 @@
 import { homedir } from "node:os";
 import { platform, arch } from "node:process";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ToolDefinition } from "../tools/types.ts";
+
+function loadInstructions(workDir: string): string | undefined {
+  const paths = [
+    join(homedir(), ".polaris", "instructions.md"),       // global
+    join(workDir, ".polaris", "instructions.md"),          // project
+  ];
+
+  const parts: string[] = [];
+  for (const p of paths) {
+    if (existsSync(p)) {
+      parts.push(readFileSync(p, "utf-8").trim());
+    }
+  }
+  return parts.length > 0 ? parts.join("\n\n") : undefined;
+}
 
 export function buildSystemPrompt(
   tools: ToolDefinition[],
@@ -18,6 +35,11 @@ export function buildSystemPrompt(
     TOOL_CALL_FORMAT,
     `## Env\nwd: ${workDir} | ${platform} ${arch}`,
   ];
+
+  const instructions = loadInstructions(workDir);
+  if (instructions) {
+    sections.push(`## Project Instructions\n${instructions}`);
+  }
 
   if (memoryContext) {
     sections.push(`## Memory\n${memoryContext}`);

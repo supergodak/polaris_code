@@ -6,6 +6,7 @@ export interface ToolDefinition {
   parameters: Record<string, unknown>; // JSON Schema object
   permissionLevel: "auto" | "confirm" | "deny";
   handler: (args: Record<string, unknown>) => Promise<ToolResult>;
+  onOutput?: (chunk: string) => void; // Real-time output callback (set by agent loop)
 }
 
 export interface ToolResult {

@@ -55,17 +55,19 @@ describe("pruneMessages", () => {
       { role: "system", content: "Short" },
       { role: "user", content: "Hi" },
     ];
-    const result = pruneMessages(msgs, 10000);
+    const { messages: result, pruned } = pruneMessages(msgs, 10000);
     expect(result).toHaveLength(2);
     expect(result).not.toBe(msgs); // Should be a copy
+    expect(pruned).toBe(false);
   });
 
   it("compresses old messages when over budget", () => {
     const msgs = makeMessages(20); // Many long messages
-    const result = pruneMessages(msgs, 500); // Very tight budget
+    const { messages: result, pruned } = pruneMessages(msgs, 500); // Very tight budget
 
     // Should have same number of messages but some compressed
     expect(result.length).toBe(msgs.length);
+    expect(pruned).toBe(true);
 
     // Old assistant messages should be compressed
     const oldAssistant = result.find(
@@ -76,14 +78,14 @@ describe("pruneMessages", () => {
 
   it("preserves system messages", () => {
     const msgs = makeMessages(20);
-    const result = pruneMessages(msgs, 500);
+    const { messages: result } = pruneMessages(msgs, 500);
     const system = result.find((m) => m.role === "system");
     expect(system?.content).toBe("System prompt");
   });
 
   it("preserves last 3 turns", () => {
     const msgs = makeMessages(20);
-    const result = pruneMessages(msgs, 500);
+    const { messages: result } = pruneMessages(msgs, 500);
 
     // Last 6 messages should not be compressed
     const tail = result.slice(-6);
@@ -109,7 +111,7 @@ describe("pruneMessages", () => {
       { role: "assistant", content: "resp3" },
     ];
 
-    const result = pruneMessages(msgs, 300);
+    const { messages: result } = pruneMessages(msgs, 300);
     const toolMsg = result.find((m) => m.role === "tool");
     expect(toolMsg?.content).toContain("[Compressed");
   });

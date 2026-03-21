@@ -12,6 +12,7 @@ interface AppProps {
   agentLoop: AgentLoop;
   version: string;
   modelName: string;
+  initialPrompt?: string;
 }
 
 interface ChatMessage {
@@ -32,17 +33,20 @@ interface PendingPermission {
   resolve: (approved: boolean) => void;
 }
 
-export function App({ agentLoop, version, modelName }: AppProps) {
+export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) {
   const { exit } = useApp();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [phase, setPhase] = useState<"idle" | "thinking" | "responding" | "tool_calling" | "executing">("idle");
   const [executingToolName, setExecutingToolName] = useState("");
   const [streamingText, setStreamingText] = useState(""); // Live streaming content
+  const [toolOutput, setToolOutput] = useState(""); // Real-time tool output
   const [toolHistory, setToolHistory] = useState<ToolCallEntry[]>([]);
   const [pendingPermission, setPendingPermission] = useState<PendingPermission | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [mode, setMode] = useState<"execute" | "plan">("execute");
+  const [contextInfo, setContextInfo] = useState<{ tokens: number; maxTokens: number } | null>(null);
+  const [contextPruned, setContextPruned] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Elapsed time counter
@@ -98,6 +102,14 @@ export function App({ agentLoop, version, modelName }: AppProps) {
         case "executing":
           setPhase("executing");
           setExecutingToolName(state.toolName);
+          setToolOutput("");
+          break;
+        case "tool_output":
+          setToolOutput((prev) => {
+            const combined = prev + state.chunk;
+            // Keep last 2000 chars to avoid memory issues
+            return combined.length > 2000 ? combined.slice(-2000) : combined;
+          });
           break;
         case "responding":
           setPhase("responding");
@@ -110,13 +122,32 @@ export function App({ agentLoop, version, modelName }: AppProps) {
 
     const handleMode = (m: string) => setMode(m as "plan" | "execute");
 
+    const handleContext = (info: { tokens: number; maxTokens: number; pruned: boolean; tokensBefore: number }) => {
+      setContextInfo({ tokens: info.tokens, maxTokens: info.maxTokens });
+      if (info.pruned) {
+        setContextPruned(true);
+        setTimeout(() => setContextPruned(false), 5000);
+      }
+    };
+
     agentLoop.on("state", handleState);
     agentLoop.on("mode", handleMode);
+    agentLoop.on("context", handleContext);
     return () => {
       agentLoop.off("state", handleState);
       agentLoop.off("mode", handleMode);
+      agentLoop.off("context", handleContext);
     };
   }, [agentLoop]);
+
+  // Auto-submit initial prompt
+  const initialPromptSent = useRef(false);
+  useEffect(() => {
+    if (initialPrompt && !initialPromptSent.current) {
+      initialPromptSent.current = true;
+      handleSubmit(initialPrompt);
+    }
+  }, [initialPrompt]);
 
   const handleSubmit = useCallback(async (text: string) => {
     // Slash commands
@@ -133,8 +164,23 @@ export function App({ agentLoop, version, modelName }: AppProps) {
       if (cmd === "help") {
         setMessages((prev) => [
           ...prev,
-          { role: "assistant" as const, content: "Commands: /plan, /do, /quit, /clear, /help, /memory" },
+          { role: "assistant" as const, content: "Commands: /plan, /do, /init, /compact, /quit, /clear, /help, /memory" },
         ]);
+        return;
+      }
+      if (cmd === "init") {
+        setMessages((prev) => [...prev, { role: "user" as const, content: text }]);
+        setIsProcessing(true);
+        setToolHistory([]);
+        const result = await agentLoop.run(
+          "Analyze this project's structure and create a `.polaris/instructions.md` file with project-specific instructions for the AI agent. " +
+          "Include: project overview, tech stack, directory structure, build/test commands, coding conventions. " +
+          "Use the write_file tool to create the file.",
+        );
+        setStreamingText("");
+        setToolHistory([]);
+        setMessages((prev) => [...prev, { role: "assistant" as const, content: result }]);
+        setIsProcessing(false);
         return;
       }
       if (cmd === "plan") {
@@ -151,6 +197,16 @@ export function App({ agentLoop, version, modelName }: AppProps) {
           ...prev,
           { role: "assistant" as const, content: "Execution mode: all tools available." },
         ]);
+        return;
+      }
+      if (cmd === "compact") {
+        setIsProcessing(true);
+        const { before, after } = await agentLoop.compact();
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant" as const, content: `Context compacted: ${Math.round(before / 1000)}k → ${Math.round(after / 1000)}k tokens` },
+        ]);
+        setIsProcessing(false);
         return;
       }
       if (cmd === "memory") {
@@ -220,7 +276,19 @@ export function App({ agentLoop, version, modelName }: AppProps) {
         {mode === "plan" && (
           <Text color="yellow" bold>{" "}[PLAN]</Text>
         )}
+        {contextInfo && (
+          <Text color={contextInfo.tokens > contextInfo.maxTokens * 0.8 ? "yellow" : "gray"}>
+            {" "}[ctx: {Math.round(contextInfo.tokens / 1000)}k/{Math.round(contextInfo.maxTokens / 1000)}k]
+          </Text>
+        )}
       </Box>
+
+      {/* Context pruning notification */}
+      {contextPruned && (
+        <Box>
+          <Text color="yellow">  Context compressed to fit token budget.</Text>
+        </Box>
+      )}
 
       {/* Chat messages */}
       <Chat messages={messages} />
@@ -236,6 +304,13 @@ export function App({ agentLoop, version, modelName }: AppProps) {
               status={tc.status}
             />
           ))}
+        </Box>
+      )}
+
+      {/* Real-time tool output */}
+      {toolOutput && phase === "executing" && (
+        <Box marginLeft={2} flexDirection="column">
+          <Text color="gray">{toolOutput}</Text>
         </Box>
       )}
 

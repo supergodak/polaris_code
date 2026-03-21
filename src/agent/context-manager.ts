@@ -11,17 +11,24 @@ import { estimateTokens } from "../memory/loader.ts";
  * 3. Older tool results → compressed to 1-line summary
  * 4. Older assistant reasoning → compressed to 1-line summary
  */
+export interface PruneResult {
+  messages: Message[];
+  tokensBefore: number;
+  tokensAfter: number;
+  pruned: boolean;
+}
+
 export function pruneMessages(
   messages: Message[],
   maxTokens: number,
-): Message[] {
+): PruneResult {
   const totalTokens = messages.reduce(
     (sum, m) => sum + estimateTokens(messageText(m)),
     0,
   );
 
   if (totalTokens <= maxTokens) {
-    return [...messages]; // Already within budget, return copy
+    return { messages: [...messages], tokensBefore: totalTokens, tokensAfter: totalTokens, pruned: false };
   }
 
   const result = [...messages];
@@ -68,7 +75,12 @@ export function pruneMessages(
     if (currentTokens <= maxTokens) break;
   }
 
-  return result;
+  const tokensAfter = result.reduce(
+    (sum, m) => sum + estimateTokens(messageText(m)),
+    0,
+  );
+
+  return { messages: result, tokensBefore: totalTokens, tokensAfter, pruned: true };
 }
 
 function messageText(msg: Message): string {
