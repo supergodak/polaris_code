@@ -4,6 +4,7 @@ import { validateStringArgs } from "./validate.ts";
 
 const DEFAULT_TIMEOUT_MS = 120_000; // 2 minutes
 const MAX_OUTPUT_LENGTH = 50_000;
+const SHELL = process.env.SHELL || "/bin/sh";
 
 export const bashTool: ToolDefinition = {
   name: "bash",
@@ -35,7 +36,7 @@ export const bashTool: ToolDefinition = {
           timeout,
           maxBuffer: 10 * 1024 * 1024,
           encoding: "utf-8",
-          shell: "/bin/zsh",
+          shell: SHELL,
         },
         (error, stdout, stderr) => {
           let output = "";
