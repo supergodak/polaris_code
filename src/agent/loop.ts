@@ -28,6 +28,7 @@ export class AgentLoop extends EventEmitter {
   private logger: Logger;
   private config: AgentLoopConfig;
   private _planMode = false;
+  private _abortController: AbortController | null = null;
 
   constructor(
     client: LLMClient,
@@ -65,7 +66,20 @@ export class AgentLoop extends EventEmitter {
     this.emit("mode", enabled ? "plan" : "execute");
   }
 
+  abort(): void {
+    if (this._abortController) {
+      this._abortController.abort();
+    }
+  }
+
+  get isAborted(): boolean {
+    return this._abortController?.signal.aborted ?? false;
+  }
+
   async run(userMessage: string): Promise<string> {
+    this._abortController = new AbortController();
+    const signal = this._abortController.signal;
+
     // In plan mode, prepend instruction to only analyze/plan
     const effectiveMessage = this._planMode
       ? `[PLAN MODE - read-only, no file changes allowed]\n${userMessage}`
@@ -76,6 +90,11 @@ export class AgentLoop extends EventEmitter {
     let iterations = 0;
 
     while (iterations < this.config.maxIterations) {
+      if (signal.aborted) {
+        this.setState({ type: "idle" });
+        return "(interrupted by user)";
+      }
+
       iterations++;
 
       // Prune messages before sending (operate on copy)
@@ -91,15 +110,26 @@ export class AgentLoop extends EventEmitter {
         const textChunks: string[] = [];
 
         const result = await collectStream(stream, (chunk) => {
+          if (signal.aborted) return;
           textChunks.push(chunk);
           this.setState({ type: "responding", content: textChunks.join("") });
         });
+
+        if (signal.aborted) {
+          this.messages.push({ role: "assistant", content: textChunks.join("") || "(interrupted)" });
+          this.setState({ type: "idle" });
+          return "(interrupted by user)";
+        }
 
         content = result.content;
         toolCalls = result.toolCalls;
 
         this.logger.llmRequest(prunedMessages, result.usage, Date.now() - startTime);
       } catch (e) {
+        if (signal.aborted) {
+          this.setState({ type: "idle" });
+          return "(interrupted by user)";
+        }
         this.logger.error("llm_error", { error: String(e) });
         return `Error communicating with LLM: ${e instanceof Error ? e.message : String(e)}`;
       }
@@ -121,6 +151,10 @@ export class AgentLoop extends EventEmitter {
 
       // Process each tool call
       for (const tc of toolCalls) {
+        if (signal.aborted) {
+          this.setState({ type: "idle" });
+          return "(interrupted by user)";
+        }
         const result = await this.processToolCall(tc);
         this.messages.push({
           role: "tool",

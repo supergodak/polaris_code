@@ -6,3 +6,13 @@ dist/
 .DS_Store
 package/
 bun.lock
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Sub-projects (not part of Polaris)
+ECサイト構築/
+toku-toku-market/

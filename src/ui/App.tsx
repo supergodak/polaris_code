@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Box, Text, useApp } from "ink";
+import { Box, Text, useApp, useInput } from "ink";
 import { Chat } from "./Chat.tsx";
 import { Input } from "./Input.tsx";
 import { Spinner } from "./Spinner.tsx";
@@ -19,7 +19,8 @@ interface ChatMessage {
   content: string;
 }
 
-interface ActiveToolCall {
+interface ToolCallEntry {
+  id: string;
   name: string;
   args: Record<string, unknown>;
   status: "running" | "done" | "error";
@@ -35,9 +36,10 @@ export function App({ agentLoop, version, modelName }: AppProps) {
   const { exit } = useApp();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [stateLabel, setStateLabel] = useState("");
+  const [phase, setPhase] = useState<"idle" | "thinking" | "responding" | "tool_calling" | "executing">("idle");
+  const [executingToolName, setExecutingToolName] = useState("");
   const [streamingText, setStreamingText] = useState(""); // Live streaming content
-  const [activeTool, setActiveTool] = useState<ActiveToolCall | null>(null);
+  const [toolHistory, setToolHistory] = useState<ToolCallEntry[]>([]);
   const [pendingPermission, setPendingPermission] = useState<PendingPermission | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [mode, setMode] = useState<"execute" | "plan">("execute");
@@ -57,32 +59,35 @@ export function App({ agentLoop, version, modelName }: AppProps) {
     };
   }, [isProcessing]);
 
+  // Counter to generate unique IDs for tool calls
+  const toolIdCounter = useRef(0);
+
   useEffect(() => {
     const handleState = (state: AgentState) => {
       switch (state.type) {
         case "idle":
-          setStateLabel("");
-          setActiveTool(null);
+          setPhase("idle");
+          setExecutingToolName("");
           setStreamingText("");
           break;
         case "thinking":
-          setActiveTool((prev) =>
-            prev && prev.status === "running"
-              ? { ...prev, status: "done" }
-              : prev,
+          // Mark all running tools as done
+          setToolHistory((prev) =>
+            prev.map((t) => t.status === "running" ? { ...t, status: "done" as const } : t),
           );
-          setStateLabel("Thinking...");
+          setPhase("thinking");
           setStreamingText("");
           break;
-        case "tool_calling":
-          setActiveTool({
-            name: state.toolName,
-            args: state.args,
-            status: "running",
-          });
+        case "tool_calling": {
+          const id = `tc-${++toolIdCounter.current}`;
+          setToolHistory((prev) => [
+            ...prev.map((t) => t.status === "running" ? { ...t, status: "done" as const } : t),
+            { id, name: state.toolName, args: state.args, status: "running" as const },
+          ]);
+          setPhase("tool_calling");
           setStreamingText("");
-          setStateLabel("");
           break;
+        }
         case "awaiting_permission":
           setPendingPermission({
             toolName: state.toolName,
@@ -91,11 +96,11 @@ export function App({ agentLoop, version, modelName }: AppProps) {
           });
           break;
         case "executing":
-          setStateLabel(`Running ${state.toolName}...`);
+          setPhase("executing");
+          setExecutingToolName(state.toolName);
           break;
         case "responding":
-          // Live streaming text update
-          setStateLabel("");
+          setPhase("responding");
           if (state.content) {
             setStreamingText(state.content);
           }
@@ -161,10 +166,12 @@ export function App({ agentLoop, version, modelName }: AppProps) {
     setMessages((prev) => [...prev, { role: "user" as const, content: text }]);
     setIsProcessing(true);
     setStreamingText("");
+    setToolHistory([]);
 
     const result = await agentLoop.run(text);
 
     setStreamingText("");
+    setToolHistory([]);
     setMessages((prev) => [...prev, { role: "assistant" as const, content: result }]);
     setIsProcessing(false);
   }, [agentLoop, exit]);
@@ -175,6 +182,31 @@ export function App({ agentLoop, version, modelName }: AppProps) {
       setPendingPermission(null);
     }
   }, [pendingPermission]);
+
+  // ESC double-tap detection (within 300ms)
+  const lastEscRef = useRef<number>(0);
+
+  useInput((_input, key) => {
+    if (key.escape && isProcessing) {
+      const now = Date.now();
+      if (now - lastEscRef.current < 300) {
+        // Double-tap detected → abort
+        agentLoop.abort();
+        setStreamingText("");
+        setToolHistory([]);
+        setPhase("idle");
+        setExecutingToolName("");
+        setIsProcessing(false);
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant" as const, content: "(interrupted by user)" },
+        ]);
+        lastEscRef.current = 0;
+      } else {
+        lastEscRef.current = now;
+      }
+    }
+  });
 
   const elapsedStr = elapsed > 0 ? ` (${elapsed}s)` : "";
 
@@ -193,6 +225,20 @@ export function App({ agentLoop, version, modelName }: AppProps) {
       {/* Chat messages */}
       <Chat messages={messages} />
 
+      {/* Tool call history */}
+      {toolHistory.length > 0 && (
+        <Box flexDirection="column">
+          {toolHistory.map((tc) => (
+            <ToolCallDisplay
+              key={tc.id}
+              name={tc.name}
+              args={tc.args}
+              status={tc.status}
+            />
+          ))}
+        </Box>
+      )}
+
       {/* Live streaming response */}
       {streamingText && (
         <Box>
@@ -200,15 +246,6 @@ export function App({ agentLoop, version, modelName }: AppProps) {
           <Text>{streamingText}</Text>
           <Text color="gray">▍</Text>
         </Box>
-      )}
-
-      {/* Active tool call */}
-      {activeTool && (
-        <ToolCallDisplay
-          name={activeTool.name}
-          args={activeTool.args}
-          status={activeTool.status}
-        />
       )}
 
       {/* Permission dialog */}
@@ -220,9 +257,18 @@ export function App({ agentLoop, version, modelName }: AppProps) {
         />
       )}
 
-      {/* Status with elapsed time */}
-      {isProcessing && stateLabel && (
-        <Spinner label={`${stateLabel}${elapsedStr}`} />
+      {/* Activity indicator — always visible during processing */}
+      {isProcessing && (
+        <Box>
+          <Spinner label={
+            phase === "thinking" ? `Thinking...${elapsedStr}`
+            : phase === "executing" ? `Running ${executingToolName}...${elapsedStr}`
+            : phase === "responding" ? `Streaming...${elapsedStr}`
+            : phase === "tool_calling" ? `Preparing tool call...${elapsedStr}`
+            : `Working...${elapsedStr}`
+          } />
+          <Text color="gray">  (ESC ESC to interrupt)</Text>
+        </Box>
       )}
 
       {/* Input */}

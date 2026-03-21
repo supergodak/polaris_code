@@ -2,7 +2,20 @@
   "name": "polaris",
   "version": "0.1.0",
   "type": "module",
-  "private": true,
+  "description": "Fully AI-driven coding agent powered by local LLMs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/supergodak/polaris_code.git"
+  },
+  "license": "MIT",
+  "keywords": [
+    "ai",
+    "coding-agent",
+    "llm",
+    "local-llm",
+    "cli",
+    "terminal"
+  ],
   "bin": {
     "polaris": "src/index.tsx"
   },
