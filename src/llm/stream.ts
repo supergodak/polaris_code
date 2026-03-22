@@ -17,12 +17,15 @@ export interface ParsedResponse {
 export async function collectStream(
   stream: AsyncGenerator<StreamChunk>,
   onText?: (chunk: string) => void,
+  signal?: AbortSignal,
 ): Promise<ParsedResponse> {
   let content = "";
   const toolCalls: ToolCall[] = [];
   let usage: ParsedResponse["usage"];
 
   for await (const chunk of stream) {
+    if (signal?.aborted) break;
+
     switch (chunk.type) {
       case "text":
         if (chunk.content) {

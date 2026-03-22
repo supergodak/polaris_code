@@ -34,14 +34,29 @@ export const bashTool: ToolDefinition = {
         cwd,
         stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env },
+        detached: true, // Create process group for clean kill
       });
+
+      const killProcessGroup = () => {
+        try {
+          if (child.pid) process.kill(-child.pid, "SIGKILL");
+        } catch {
+          child.kill("SIGKILL"); // Fallback
+        }
+      };
+
+      // Allow external abort (ESC ESC) to kill this process group
+      this.abort = () => {
+        killed = true;
+        killProcessGroup();
+      };
 
       const chunks: string[] = [];
       let killed = false;
 
       const timer = setTimeout(() => {
         killed = true;
-        child.kill("SIGKILL");
+        killProcessGroup();
       }, timeout);
 
       child.stdout?.on("data", (data: Buffer) => {

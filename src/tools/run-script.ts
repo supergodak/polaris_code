@@ -1,5 +1,5 @@
 import { writeFileSync, mkdirSync, unlinkSync } from "node:fs";
-import { exec } from "node:child_process";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
 import type { ToolDefinition, ToolResult } from "./types.ts";
 import { validateStringArgs } from "./validate.ts";
@@ -35,7 +35,7 @@ export const runScriptTool: ToolDefinition = {
     required: ["code"],
   },
   permissionLevel: "confirm",
-  handler: async (handlerArgs): Promise<ToolResult> => {
+  handler: async function (this: ToolDefinition, handlerArgs): Promise<ToolResult> {
     const err = validateStringArgs(handlerArgs, ["code"]);
     if (err) return err;
 
@@ -56,7 +56,7 @@ export const runScriptTool: ToolDefinition = {
 
       // Execute
       const command = `${interpreter} "${scriptPath}" ${scriptArgs}`.trim();
-      const output = await executeScript(command, DEFAULT_TIMEOUT_MS);
+      const output = await executeScript(command, DEFAULT_TIMEOUT_MS, this);
 
       return output;
     } finally {
@@ -96,36 +96,61 @@ function getInterpreter(language: string): { ext: string; interpreter: string } 
   }
 }
 
-function executeScript(command: string, timeout: number): Promise<ToolResult> {
+const SHELL = process.env.SHELL || "/bin/sh";
+
+function executeScript(command: string, timeout: number, tool?: ToolDefinition): Promise<ToolResult> {
   return new Promise((resolve) => {
-    exec(
-      command,
-      {
-        timeout,
-        maxBuffer: 10 * 1024 * 1024,
-        encoding: "utf-8",
-        cwd: process.cwd(),
-      },
-      (error, stdout, stderr) => {
-        let output = "";
-        if (stdout) output += stdout;
-        if (stderr) output += (output ? "\n--- stderr ---\n" : "") + stderr;
+    const child = spawn(SHELL, ["-c", command], {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env },
+      detached: true,
+    });
 
-        if (output.length > MAX_OUTPUT_LENGTH) {
-          output = output.slice(0, MAX_OUTPUT_LENGTH) +
-            `\n[TRUNCATED: ${output.length} chars total]`;
-        }
+    const killProcessGroup = () => {
+      try {
+        if (child.pid) process.kill(-child.pid, "SIGKILL");
+      } catch {
+        child.kill("SIGKILL");
+      }
+    };
 
-        if (error) {
-          if (error.killed) {
-            resolve({ success: false, output, error: `Script timed out after ${timeout}ms` });
-          } else {
-            resolve({ success: false, output, error: `Exit code ${error.code}` });
-          }
-        } else {
-          resolve({ success: true, output: output || "(no output)" });
-        }
-      },
-    );
+    if (tool) {
+      tool.abort = () => { killed = true; killProcessGroup(); };
+    }
+
+    const chunks: string[] = [];
+    let killed = false;
+
+    const timer = setTimeout(() => {
+      killed = true;
+      killProcessGroup();
+    }, timeout);
+
+    child.stdout?.on("data", (data: Buffer) => chunks.push(data.toString("utf-8")));
+    child.stderr?.on("data", (data: Buffer) => chunks.push(data.toString("utf-8")));
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      let output = chunks.join("");
+
+      if (output.length > MAX_OUTPUT_LENGTH) {
+        output = output.slice(0, MAX_OUTPUT_LENGTH) +
+          `\n[TRUNCATED: ${output.length} chars total]`;
+      }
+
+      if (killed) {
+        resolve({ success: false, output, error: `Script timed out after ${timeout}ms` });
+      } else if (code !== 0) {
+        resolve({ success: false, output, error: `Exit code ${code}` });
+      } else {
+        resolve({ success: true, output: output || "(no output)" });
+      }
+    });
+
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      resolve({ success: false, output: "", error: `Spawn error: ${e.message}` });
+    });
   });
 }

@@ -1,12 +1,19 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Box, Text, useApp, useInput } from "ink";
-import { Chat } from "./Chat.tsx";
 import { Input } from "./Input.tsx";
 import { Spinner } from "./Spinner.tsx";
 import { ToolCallDisplay } from "./ToolCall.tsx";
 import { Permission } from "./Permission.tsx";
 import type { AgentLoop } from "../agent/loop.ts";
 import type { AgentState } from "../agent/types.ts";
+import chalk from "chalk";
+import { marked } from "marked";
+import TerminalRenderer from "marked-terminal";
+
+// Configure marked for terminal output
+marked.setOptions({
+  renderer: new TerminalRenderer({ tab: 2 }) as any,
+});
 
 interface AppProps {
   agentLoop: AgentLoop;
@@ -15,9 +22,15 @@ interface AppProps {
   initialPrompt?: string;
 }
 
-interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
+function logUser(text: string): void {
+  process.stdout.write(`\n${chalk.bgGray.cyan.bold(` ❯ ${text} `)}\n`);
+}
+
+function logAssistant(text: string): void {
+  const rendered = marked.parse(text, { async: false }) as string;
+  // Remove trailing newlines from marked output
+  const cleaned = rendered.replace(/\n+$/, "");
+  process.stdout.write(`${chalk.white.bold("◆ ")}${cleaned}\n`);
 }
 
 interface ToolCallEntry {
@@ -25,6 +38,7 @@ interface ToolCallEntry {
   name: string;
   args: Record<string, unknown>;
   status: "running" | "done" | "error";
+  result?: string;
 }
 
 interface PendingPermission {
@@ -35,8 +49,8 @@ interface PendingPermission {
 
 export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) {
   const { exit } = useApp();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [lastResponse, setLastResponse] = useState("");
   const [phase, setPhase] = useState<"idle" | "thinking" | "responding" | "tool_calling" | "executing">("idle");
   const [executingToolName, setExecutingToolName] = useState("");
   const [streamingText, setStreamingText] = useState(""); // Live streaming content
@@ -104,6 +118,21 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
           setExecutingToolName(state.toolName);
           setToolOutput("");
           break;
+        case "tool_result":
+          setToolHistory((prev) => {
+            // Find the last tool with matching name and update it
+            const idx = [...prev].reverse().findIndex((t) => t.name === state.toolName);
+            if (idx === -1) return prev;
+            const realIdx = prev.length - 1 - idx;
+            const updated = [...prev];
+            updated[realIdx] = {
+              ...updated[realIdx]!,
+              status: state.success ? "done" as const : "error" as const,
+              result: state.result,
+            };
+            return updated;
+          });
+          break;
         case "tool_output":
           setToolOutput((prev) => {
             const combined = prev + state.chunk;
@@ -158,18 +187,15 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
         return;
       }
       if (cmd === "clear") {
-        setMessages([]);
         return;
       }
       if (cmd === "help") {
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant" as const, content: "Commands: /plan, /do, /init, /compact, /quit, /clear, /help, /memory" },
-        ]);
+        logAssistant("Commands: /plan, /do, /init, /compact, /quit, /clear, /help, /memory");
         return;
       }
       if (cmd === "init") {
-        setMessages((prev) => [...prev, { role: "user" as const, content: text }]);
+        logUser(text);
+        setLastResponse("");
         setIsProcessing(true);
         setToolHistory([]);
         const result = await agentLoop.run(
@@ -179,47 +205,40 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
         );
         setStreamingText("");
         setToolHistory([]);
-        setMessages((prev) => [...prev, { role: "assistant" as const, content: result }]);
+        setLastResponse(result);
         setIsProcessing(false);
         return;
       }
       if (cmd === "plan") {
         agentLoop.setPlanMode(true);
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant" as const, content: "Plan mode: read-only. Use /do to switch to execution mode." },
-        ]);
+        logAssistant("Plan mode: read-only. Use /do to switch to execution mode.");
         return;
       }
       if (cmd === "do" || cmd === "execute") {
         agentLoop.setPlanMode(false);
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant" as const, content: "Execution mode: all tools available." },
-        ]);
+        logAssistant("Execution mode: all tools available.");
         return;
       }
       if (cmd === "compact") {
         setIsProcessing(true);
         const { before, after } = await agentLoop.compact();
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant" as const, content: `Context compacted: ${Math.round(before / 1000)}k → ${Math.round(after / 1000)}k tokens` },
-        ]);
+        logAssistant(`Context compacted: ${Math.round(before / 1000)}k → ${Math.round(after / 1000)}k tokens`);
         setIsProcessing(false);
         return;
       }
       if (cmd === "memory") {
-        setMessages((prev) => [...prev, { role: "user" as const, content: text }]);
+        logUser(text);
+        setLastResponse("");
         setIsProcessing(true);
         const result = await agentLoop.run("List all saved memories");
-        setMessages((prev) => [...prev, { role: "assistant" as const, content: result }]);
+        setLastResponse(result);
         setIsProcessing(false);
         return;
       }
     }
 
-    setMessages((prev) => [...prev, { role: "user" as const, content: text }]);
+    logUser(text);
+    setLastResponse("");
     setIsProcessing(true);
     setStreamingText("");
     setToolHistory([]);
@@ -228,7 +247,7 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
 
     setStreamingText("");
     setToolHistory([]);
-    setMessages((prev) => [...prev, { role: "assistant" as const, content: result }]);
+    setLastResponse(result);
     setIsProcessing(false);
   }, [agentLoop, exit]);
 
@@ -239,26 +258,34 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
     }
   }, [pendingPermission]);
 
-  // ESC double-tap detection (within 300ms)
+  // ESC interrupt: 1st ESC = soft interrupt (stop streaming, show partial),
+  //                2nd ESC within 500ms = hard interrupt (kill tools + abort loop)
   const lastEscRef = useRef<number>(0);
 
   useInput((_input, key) => {
     if (key.escape && isProcessing) {
       const now = Date.now();
-      if (now - lastEscRef.current < 300) {
-        // Double-tap detected → abort
+      if (now - lastEscRef.current < 500) {
+        // 2nd ESC — hard abort: kill subprocesses and stop loop
         agentLoop.abort();
         setStreamingText("");
         setToolHistory([]);
         setPhase("idle");
         setExecutingToolName("");
         setIsProcessing(false);
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant" as const, content: "(interrupted by user)" },
-        ]);
+        logAssistant("(interrupted by user)");
         lastEscRef.current = 0;
       } else {
+        // 1st ESC — soft abort: stop LLM streaming, show partial response
+        agentLoop.abort();
+        if (streamingText) {
+          setLastResponse(streamingText);
+        }
+        setStreamingText("");
+        setToolHistory([]);
+        setPhase("idle");
+        setExecutingToolName("");
+        setIsProcessing(false);
         lastEscRef.current = now;
       }
     }
@@ -290,9 +317,6 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
         </Box>
       )}
 
-      {/* Chat messages */}
-      <Chat messages={messages} />
-
       {/* Tool call history */}
       {toolHistory.length > 0 && (
         <Box flexDirection="column">
@@ -302,6 +326,7 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
               name={tc.name}
               args={tc.args}
               status={tc.status}
+              result={tc.result}
             />
           ))}
         </Box>
@@ -330,6 +355,14 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
           args={pendingPermission.args}
           onResolve={handlePermission}
         />
+      )}
+
+      {/* Last response — always visible in Ink area */}
+      {lastResponse && !isProcessing && (
+        <Box>
+          <Text color="white" bold>{"◆ "}</Text>
+          <Text>{lastResponse}</Text>
+        </Box>
       )}
 
       {/* Activity indicator — always visible during processing */}

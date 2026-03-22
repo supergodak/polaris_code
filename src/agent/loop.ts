@@ -70,6 +70,13 @@ export class AgentLoop extends EventEmitter {
     if (this._abortController) {
       this._abortController.abort();
     }
+    // Kill any running subprocess (bash, run_script)
+    for (const tool of this.registry.all()) {
+      if (tool.abort) {
+        tool.abort();
+        tool.abort = undefined;
+      }
+    }
   }
 
   get isAborted(): boolean {
@@ -122,7 +129,7 @@ export class AgentLoop extends EventEmitter {
           if (signal.aborted) return;
           textChunks.push(chunk);
           this.setState({ type: "responding", content: textChunks.join("") });
-        });
+        }, signal);
 
         if (signal.aborted) {
           this.messages.push({ role: "assistant", content: textChunks.join("") || "(interrupted)" });
@@ -165,11 +172,18 @@ export class AgentLoop extends EventEmitter {
           return "(interrupted by user)";
         }
         const result = await this.processToolCall(tc);
+        const toolOutput = result.output || result.error || "(no output)";
         this.messages.push({
           role: "tool",
-          content: result.output || result.error || "(no output)",
+          content: toolOutput,
           tool_call_id: tc.id,
           name: tc.function.name,
+        });
+        this.emit("state", {
+          type: "tool_result",
+          toolName: tc.function.name,
+          result: toolOutput,
+          success: result.success,
         });
       }
 

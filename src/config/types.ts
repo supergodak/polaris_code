@@ -26,20 +26,20 @@ export interface PolarisConfig {
 const DEFAULTS: PolarisConfig = {
   llm: {
     apiBase: "http://localhost:8080/v1",
-    model: "default",
+    model: "mlx-community/Qwen3.5-122B-A10B-4bit",
     temperature: 0.1,
-    maxTokens: 2048,
+    maxTokens: 4096,
   },
   agent: {
-    maxIterations: 25,
-    maxContextTokens: 12000,
+    maxIterations: 80,
+    maxContextTokens: 32000,
   },
   permissions: {},
   memory: {
     enabled: true,
     globalDir: "~/.polaris/memory",
     autoLoad: true,
-    maxInjectionTokens: 2000,
+    maxInjectionTokens: 4000,
   },
   logging: {
     level: "info",

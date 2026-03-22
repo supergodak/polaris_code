@@ -53,7 +53,9 @@ const CORE_INSTRUCTIONS = `You are Polaris, a local AI coding agent. You read, w
 Rules:
 - Use tools to explore before changing code. Read files before editing.
 - Be concise. Focus on actions.
-- For investigations, use bash one-liners or run_script.`;
+- For investigations, use bash one-liners or run_script.
+- NEVER run long-running or daemon processes (npm run dev, python -m http.server, docker compose up, etc.). They will block until timeout. Only run commands that terminate.
+- If you need to test a server, suggest the user run it manually.`;
 
 const TOOL_CALL_FORMAT = `## How to call tools
 Output a JSON object inside <tool_call> tags:

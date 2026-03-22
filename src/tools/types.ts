@@ -7,6 +7,7 @@ export interface ToolDefinition {
   permissionLevel: "auto" | "confirm" | "deny";
   handler: (args: Record<string, unknown>) => Promise<ToolResult>;
   onOutput?: (chunk: string) => void; // Real-time output callback (set by agent loop)
+  abort?: () => void; // Kill running subprocess (set by tool implementation)
 }
 
 export interface ToolResult {
