@@ -122,7 +122,10 @@ export class AgentLoop extends EventEmitter {
       let toolCalls: ToolCall[] = [];
 
       try {
-        const stream = this.client.chat(prunedMessages, this.registry.toOpenAITools());
+        // First iteration: no tools → forces LLM to respond with text (plan/confirmation)
+        // Subsequent iterations: full tool access
+        const tools = iterations === 1 ? [] : this.registry.toOpenAITools();
+        const stream = this.client.chat(prunedMessages, tools);
         const textChunks: string[] = [];
 
         const result = await collectStream(stream, (chunk) => {

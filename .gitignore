@@ -7,6 +7,9 @@ dist/
 package/
 bun.lock
 
+# Python venv
+.venv/
+
 # Secrets
 .env
 .env.*

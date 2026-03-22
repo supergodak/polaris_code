@@ -22,10 +22,6 @@ interface AppProps {
   initialPrompt?: string;
 }
 
-function logUser(text: string): void {
-  process.stdout.write(`\n${chalk.bgGray.cyan.bold(` ❯ ${text} `)}\n`);
-}
-
 function logAssistant(text: string): void {
   const rendered = marked.parse(text, { async: false }) as string;
   // Remove trailing newlines from marked output
@@ -50,6 +46,7 @@ interface PendingPermission {
 export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) {
   const { exit } = useApp();
   const [isProcessing, setIsProcessing] = useState(false);
+  const [lastUserInput, setLastUserInput] = useState("");
   const [lastResponse, setLastResponse] = useState("");
   const [phase, setPhase] = useState<"idle" | "thinking" | "responding" | "tool_calling" | "executing">("idle");
   const [executingToolName, setExecutingToolName] = useState("");
@@ -194,7 +191,7 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
         return;
       }
       if (cmd === "init") {
-        logUser(text);
+        setLastUserInput(text);
         setLastResponse("");
         setIsProcessing(true);
         setToolHistory([]);
@@ -227,7 +224,7 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
         return;
       }
       if (cmd === "memory") {
-        logUser(text);
+        setLastUserInput(text);
         setLastResponse("");
         setIsProcessing(true);
         const result = await agentLoop.run("List all saved memories");
@@ -237,7 +234,7 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
       }
     }
 
-    logUser(text);
+    setLastUserInput(text);
     setLastResponse("");
     setIsProcessing(true);
     setStreamingText("");
@@ -314,6 +311,13 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
       {contextPruned && (
         <Box>
           <Text color="yellow">  Context compressed to fit token budget.</Text>
+        </Box>
+      )}
+
+      {/* Last user input — always visible */}
+      {lastUserInput && (
+        <Box marginBottom={1}>
+          <Text backgroundColor="#333333" color="cyan" bold> ❯ {lastUserInput} </Text>
         </Box>
       )}
 

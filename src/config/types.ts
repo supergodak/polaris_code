@@ -26,7 +26,7 @@ export interface PolarisConfig {
 const DEFAULTS: PolarisConfig = {
   llm: {
     apiBase: "http://localhost:8080/v1",
-    model: "mlx-community/Qwen3.5-122B-A10B-4bit",
+    model: "mlx-community/Qwen3.5-27B-4bit",
     temperature: 0.1,
     maxTokens: 4096,
   },
