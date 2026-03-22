@@ -20,6 +20,7 @@ interface AppProps {
   version: string;
   modelName: string;
   initialPrompt?: string;
+  askCallback?: AskCallback;
 }
 
 function logAssistant(text: string): void {
@@ -43,15 +44,20 @@ interface PendingPermission {
   resolve: (approved: boolean) => void;
 }
 
-export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) {
+interface AskCallback {
+  resolveAsk: (answer: string) => void;
+}
+
+export function App({ agentLoop, version, modelName, initialPrompt, askCallback }: AppProps) {
   const { exit } = useApp();
   const [isProcessing, setIsProcessing] = useState(false);
-  const [phase, setPhase] = useState<"idle" | "thinking" | "responding" | "tool_calling" | "executing">("idle");
+  const [phase, setPhase] = useState<"idle" | "thinking" | "responding" | "tool_calling" | "executing" | "awaiting_input">("idle");
   const [executingToolName, setExecutingToolName] = useState("");
   const [streamingText, setStreamingText] = useState(""); // Live streaming content
   const [toolOutput, setToolOutput] = useState(""); // Real-time tool output
   const [toolHistory, setToolHistory] = useState<ToolCallEntry[]>([]);
   const [pendingPermission, setPendingPermission] = useState<PendingPermission | null>(null);
+  const [pendingQuestion, setPendingQuestion] = useState("");
   const [elapsed, setElapsed] = useState(0);
   const [mode, setMode] = useState<"execute" | "plan">("execute");
   const [contextInfo, setContextInfo] = useState<{ tokens: number; maxTokens: number } | null>(null);
@@ -114,9 +120,16 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
           setStreamingText("");
           break;
         case "reasoning":
-          // Write reasoning text to stdout — stays in scrollback
-          setStreamingText("");
-          logAssistant(state.content);
+          // Reasoning was already shown during streaming.
+          // Clear Ink, then write clean version to scrollback.
+          setStreamingText((prev) => {
+            // Only write to stdout if content is substantively different
+            // from what was already streamed (avoid duplication)
+            if (!prev || prev.trim() !== state.content.trim()) {
+              logAssistant(state.content);
+            }
+            return "";
+          });
           break;
         case "tool_calling": {
           const id = `tc-${++toolIdCounter.current}`;
@@ -139,6 +152,20 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
           setPhase("executing");
           setExecutingToolName(state.toolName);
           setToolOutput("");
+          // ask_user needs user input — show input prompt
+          if (state.toolName === "ask_user") {
+            setPhase("awaiting_input");
+            // Extract question from tool history
+            setToolHistory((prev) => {
+              const last = prev[prev.length - 1];
+              if (last && last.name === "ask_user") {
+                const q = last.args.question as string ?? "";
+                setPendingQuestion(q);
+                process.stdout.write(`${chalk.cyan("? ")}${chalk.bold(q)}\n`);
+              }
+              return prev;
+            });
+          }
           break;
         case "tool_result":
           setToolHistory((prev) => {
@@ -289,6 +316,13 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
     setIsProcessing(false);
   }, [agentLoop, exit]);
 
+  const handleAskResponse = useCallback((answer: string) => {
+    process.stdout.write(`${chalk.gray(`  → ${answer}`)}\n`);
+    setPendingQuestion("");
+    setPhase("executing");
+    askCallback?.resolveAsk(answer);
+  }, [askCallback]);
+
   const handlePermission = useCallback((approved: boolean) => {
     if (pendingPermission) {
       pendingPermission.resolve(approved);
@@ -386,12 +420,12 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
         </Box>
       )}
 
-      {/* Input */}
-      {!isProcessing && (
+      {/* Input: shown when idle OR when ask_user is waiting for response */}
+      {(!isProcessing || phase === "awaiting_input") && (
         <Box marginTop={1}>
           <Input
-            onSubmit={handleSubmit}
-            disabled={isProcessing || !!pendingPermission}
+            onSubmit={phase === "awaiting_input" ? handleAskResponse : handleSubmit}
+            disabled={false}
           />
         </Box>
       )}

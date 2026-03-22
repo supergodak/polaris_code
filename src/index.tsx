@@ -227,6 +227,7 @@ if (opts.print) {
       version={VERSION}
       modelName={config.llm.model}
       initialPrompt={initialPrompt}
+      askCallback={interaction}
     />,
   );
 }
