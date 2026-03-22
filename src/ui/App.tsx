@@ -86,12 +86,30 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
           setStreamingText("");
           break;
         case "thinking":
-          // Mark all running tools as done
-          setToolHistory((prev) =>
-            prev.map((t) => t.status === "running" ? { ...t, status: "done" as const } : t),
-          );
+          // Flush completed tool history to stdout before next iteration
+          setToolHistory((prev) => {
+            for (const tc of prev) {
+              const icon = tc.status === "done" ? chalk.green("✓") : tc.status === "error" ? chalk.red("✗") : chalk.yellow("⟳");
+              const argsStr = Object.entries(tc.args)
+                .map(([k, v]) => `${k}=${typeof v === "string" ? `"${v.length > 40 ? v.slice(0, 40) + "..." : v}"` : JSON.stringify(v)}`)
+                .join(" ");
+              process.stdout.write(`  ${icon} ${chalk.yellow(tc.name)}: ${chalk.gray(argsStr)}\n`);
+              if (tc.result) {
+                const preview = tc.result.split("\n")[0]?.slice(0, 80) ?? "";
+                const lineCount = tc.result.split("\n").length;
+                const suffix = lineCount > 1 ? chalk.gray(` (+${lineCount - 1} lines)`) : "";
+                process.stdout.write(`    ${chalk.gray(preview)}${suffix}\n`);
+              }
+            }
+            return [];
+          });
           setPhase("thinking");
           setStreamingText("");
+          break;
+        case "reasoning":
+          // Write reasoning text to stdout — stays in scrollback
+          setStreamingText("");
+          logAssistant(state.content);
           break;
         case "tool_calling": {
           const id = `tc-${++toolIdCounter.current}`;
@@ -242,8 +260,25 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
 
     const result = await agentLoop.run(text);
 
+    // Flush remaining tool history to stdout
+    setToolHistory((prev) => {
+      for (const tc of prev) {
+        const icon = tc.status === "done" ? chalk.green("✓") : tc.status === "error" ? chalk.red("✗") : chalk.yellow("⟳");
+        const argsStr = Object.entries(tc.args)
+          .map(([k, v]) => `${k}=${typeof v === "string" ? `"${v.length > 40 ? v.slice(0, 40) + "..." : v}"` : JSON.stringify(v)}`)
+          .join(" ");
+        process.stdout.write(`  ${icon} ${chalk.yellow(tc.name)}: ${chalk.gray(argsStr)}\n`);
+        if (tc.result) {
+          const preview = tc.result.split("\n")[0]?.slice(0, 80) ?? "";
+          const lineCount = tc.result.split("\n").length;
+          const suffix = lineCount > 1 ? chalk.gray(` (+${lineCount - 1} lines)`) : "";
+          process.stdout.write(`    ${chalk.gray(preview)}${suffix}\n`);
+        }
+      }
+      return [];
+    });
+
     setStreamingText("");
-    setToolHistory([]);
     setLastResponse(result);
     setIsProcessing(false);
   }, [agentLoop, exit]);

@@ -6,7 +6,8 @@ export type AgentState =
   | { type: "executing"; toolName: string }
   | { type: "responding"; content: string }
   | { type: "tool_output"; toolName: string; chunk: string }
-  | { type: "tool_result"; toolName: string; result: string; success: boolean };
+  | { type: "tool_result"; toolName: string; result: string; success: boolean }
+  | { type: "reasoning"; content: string };
 
 export interface UserInteraction {
   ask(question: string): Promise<string>;

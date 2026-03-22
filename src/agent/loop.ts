@@ -161,6 +161,11 @@ export class AgentLoop extends EventEmitter {
         return responseText;
       }
 
+      // Emit reasoning text before tool execution (makes thinking visible)
+      if (content && content.trim()) {
+        this.emit("state", { type: "reasoning", content: content.trim() });
+      }
+
       // Add assistant message with tool calls
       this.messages.push({
         role: "assistant",
