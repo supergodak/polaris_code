@@ -1,4 +1,5 @@
 import type { Message, ToolCall, StreamChunk } from "./types.ts";
+import { sanitizeChunk, detectDegenerate, sanitizeFinalContent } from "./sanitizer.ts";
 
 export interface ParsedResponse {
   content: string | null;
@@ -14,23 +15,52 @@ export interface ParsedResponse {
  * Collects streaming chunks into a complete parsed response.
  * Calls onText for each text chunk (for real-time display).
  */
+export interface CollectStreamOptions {
+  onText?: (chunk: string) => void;
+  signal?: AbortSignal;
+}
+
 export async function collectStream(
   stream: AsyncGenerator<StreamChunk>,
-  onText?: (chunk: string) => void,
+  onTextOrOpts?: ((chunk: string) => void) | CollectStreamOptions,
   signal?: AbortSignal,
 ): Promise<ParsedResponse> {
+  // Support both old signature (onText, signal) and new options object
+  let onText: ((chunk: string) => void) | undefined;
+  let abortSignal: AbortSignal | undefined;
+  if (typeof onTextOrOpts === "function") {
+    onText = onTextOrOpts;
+    abortSignal = signal;
+  } else if (onTextOrOpts) {
+    onText = onTextOrOpts.onText;
+    abortSignal = onTextOrOpts.signal;
+  }
+
   let content = "";
   const toolCalls: ToolCall[] = [];
   let usage: ParsedResponse["usage"];
+  let abortedByDegenerate = false;
 
   for await (const chunk of stream) {
-    if (signal?.aborted) break;
+    if (abortSignal?.aborted) break;
 
     switch (chunk.type) {
       case "text":
         if (chunk.content) {
-          content += chunk.content;
-          onText?.(chunk.content);
+          // Sanitize at the stream level — model quirks handled here
+          const cleaned = sanitizeChunk(chunk.content);
+          if (!cleaned) break;
+
+          content += cleaned;
+
+          // Check for degenerate output (loops, max length)
+          const reason = detectDegenerate(content);
+          if (reason) {
+            abortedByDegenerate = true;
+            break;
+          }
+
+          onText?.(cleaned);
         }
         break;
 
@@ -53,6 +83,8 @@ export async function collectStream(
         }
         break;
     }
+
+    if (abortedByDegenerate) break;
   }
 
   // Fallback: if no tool_calls from API but content contains tool call tags,
@@ -62,9 +94,13 @@ export async function collectStream(
     const parsed = parseToolCallsFromContent(content);
     if (parsed.length > 0) {
       toolCalls.push(...parsed);
-      // Remove the tool call tags from content
       content = stripToolCallTags(content);
     }
+  }
+
+  // Final sanitization pass
+  if (content) {
+    content = sanitizeFinalContent(content);
   }
 
   return {
@@ -153,15 +189,23 @@ export function parseToolCallsFromContent(content: string): ToolCall[] {
 function tryParseToolCall(raw: string): ToolCall | null {
   try {
     const parsed = JSON.parse(raw);
-    if (parsed.name && parsed.arguments !== undefined) {
+    // Support multiple formats:
+    // Format 1 (Qwen): {"name": "tool", "arguments": {...}}
+    // Format 2 (Llama): {"type": "function", "name": "tool", "parameters": {...}}
+    // Format 3 (Llama): {"name": "tool", "parameters": {...}}
+    // Format 4: {"function": {"name": "tool", "arguments": {...}}}
+    const name = parsed.name ?? parsed.function?.name;
+    const args = parsed.arguments ?? parsed.parameters ?? parsed.function?.arguments;
+
+    if (name && args !== undefined) {
       return {
         id: `call_${Math.random().toString(36).slice(2, 10)}`,
         type: "function",
         function: {
-          name: parsed.name,
-          arguments: typeof parsed.arguments === "string"
-            ? parsed.arguments
-            : JSON.stringify(parsed.arguments),
+          name,
+          arguments: typeof args === "string"
+            ? args
+            : JSON.stringify(args),
         },
       };
     }

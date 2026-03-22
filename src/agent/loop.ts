@@ -122,17 +122,17 @@ export class AgentLoop extends EventEmitter {
       let toolCalls: ToolCall[] = [];
 
       try {
-        // First iteration: no tools → forces LLM to respond with text (plan/confirmation)
-        // Subsequent iterations: full tool access
-        const tools = iterations === 1 ? [] : this.registry.toOpenAITools();
-        const stream = this.client.chat(prunedMessages, tools);
+        const stream = this.client.chat(prunedMessages, this.registry.toOpenAITools());
         const textChunks: string[] = [];
 
-        const result = await collectStream(stream, (chunk) => {
-          if (signal.aborted) return;
-          textChunks.push(chunk);
-          this.setState({ type: "responding", content: textChunks.join("") });
-        }, signal);
+        const result = await collectStream(stream, {
+          onText: (chunk) => {
+            if (signal.aborted) return;
+            textChunks.push(chunk);
+            this.setState({ type: "responding", content: textChunks.join("") });
+          },
+          signal,
+        });
 
         if (signal.aborted) {
           this.messages.push({ role: "assistant", content: textChunks.join("") || "(interrupted)" });
@@ -250,6 +250,20 @@ export class AgentLoop extends EventEmitter {
             `The raw output was: ${tc.function.arguments.slice(0, 200)}. ` +
             `Please call the tool again with valid JSON.`,
           error: "INVALID_JSON",
+        };
+      }
+    }
+
+    // Validate required arguments against tool schema
+    const schema = tool.parameters as { required?: string[]; properties?: Record<string, unknown> };
+    if (schema.required) {
+      const missing = schema.required.filter((key) => args[key] === undefined || args[key] === null);
+      if (missing.length > 0) {
+        const available = schema.properties ? Object.keys(schema.properties).join(", ") : "unknown";
+        return {
+          success: false,
+          output: `Missing required argument(s): ${missing.join(", ")}. Expected arguments: ${available}. Please call '${toolName}' again with the correct arguments.`,
+          error: "MISSING_ARGS",
         };
       }
     }
