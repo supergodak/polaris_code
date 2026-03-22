@@ -46,8 +46,6 @@ interface PendingPermission {
 export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) {
   const { exit } = useApp();
   const [isProcessing, setIsProcessing] = useState(false);
-  const [lastUserInput, setLastUserInput] = useState("");
-  const [lastResponse, setLastResponse] = useState("");
   const [phase, setPhase] = useState<"idle" | "thinking" | "responding" | "tool_calling" | "executing">("idle");
   const [executingToolName, setExecutingToolName] = useState("");
   const [streamingText, setStreamingText] = useState(""); // Live streaming content
@@ -59,6 +57,15 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
   const [contextInfo, setContextInfo] = useState<{ tokens: number; maxTokens: number } | null>(null);
   const [contextPruned, setContextPruned] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Write header to stdout once at startup
+  const headerWritten = useRef(false);
+  useEffect(() => {
+    if (!headerWritten.current) {
+      headerWritten.current = true;
+      process.stdout.write(`\n${chalk.magenta.bold("Polaris")} ${chalk.gray(`v${version}`)} ${chalk.gray(`(${modelName})`)}\n\n`);
+    }
+  }, []);
 
   // Elapsed time counter
   useEffect(() => {
@@ -210,7 +217,7 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
       }
       if (cmd === "init") {
         setLastUserInput(text);
-        setLastResponse("");
+        // (response will be written to stdout when complete)
         setIsProcessing(true);
         setToolHistory([]);
         const result = await agentLoop.run(
@@ -220,7 +227,7 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
         );
         setStreamingText("");
         setToolHistory([]);
-        setLastResponse(result);
+        logAssistant(result);
         setIsProcessing(false);
         return;
       }
@@ -243,17 +250,16 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
       }
       if (cmd === "memory") {
         setLastUserInput(text);
-        setLastResponse("");
+        // (response will be written to stdout when complete)
         setIsProcessing(true);
         const result = await agentLoop.run("List all saved memories");
-        setLastResponse(result);
+        logAssistant(result);
         setIsProcessing(false);
         return;
       }
     }
 
-    setLastUserInput(text);
-    setLastResponse("");
+    process.stdout.write(`\n${chalk.bgGray.cyan.bold(` ❯ ${text} `)}\n`);
     setIsProcessing(true);
     setStreamingText("");
     setToolHistory([]);
@@ -279,7 +285,7 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
     });
 
     setStreamingText("");
-    setLastResponse(result);
+    logAssistant(result);
     setIsProcessing(false);
   }, [agentLoop, exit]);
 
@@ -311,7 +317,7 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
         // 1st ESC — soft abort: stop LLM streaming, show partial response
         agentLoop.abort();
         if (streamingText) {
-          setLastResponse(streamingText);
+          if (streamingText) logAssistant(streamingText);
         }
         setStreamingText("");
         setToolHistory([]);
@@ -325,47 +331,18 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
 
   const elapsedStr = elapsed > 0 ? ` (${elapsed}s)` : "";
 
+  // Ink dynamic area: ONLY the currently active element + input
   return (
-    <Box flexDirection="column" padding={1}>
-      {/* Header */}
-      <Box marginBottom={1}>
-        <Text color="magenta" bold>Polaris</Text>
-        <Text color="gray"> v{version} </Text>
-        <Text color="gray">({modelName})</Text>
-        {mode === "plan" && (
-          <Text color="yellow" bold>{" "}[PLAN]</Text>
-        )}
-        {contextInfo && (
-          <Text color={contextInfo.tokens > contextInfo.maxTokens * 0.8 ? "yellow" : "gray"}>
-            {" "}[ctx: {Math.round(contextInfo.tokens / 1000)}k/{Math.round(contextInfo.maxTokens / 1000)}k]
-          </Text>
-        )}
-      </Box>
-
-      {/* Context pruning notification */}
-      {contextPruned && (
-        <Box>
-          <Text color="yellow">  Context compressed to fit token budget.</Text>
-        </Box>
-      )}
-
-      {/* Last user input — always visible */}
-      {lastUserInput && (
-        <Box marginBottom={1}>
-          <Text backgroundColor="#333333" color="cyan" bold> ❯ {lastUserInput} </Text>
-        </Box>
-      )}
-
-      {/* Tool call history */}
+    <Box flexDirection="column">
+      {/* Currently running tool */}
       {toolHistory.length > 0 && (
         <Box flexDirection="column">
-          {toolHistory.map((tc) => (
+          {toolHistory.filter((tc) => tc.status === "running").map((tc) => (
             <ToolCallDisplay
               key={tc.id}
               name={tc.name}
               args={tc.args}
               status={tc.status}
-              result={tc.result}
             />
           ))}
         </Box>
@@ -373,7 +350,7 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
 
       {/* Real-time tool output */}
       {toolOutput && phase === "executing" && (
-        <Box marginLeft={2} flexDirection="column">
+        <Box marginLeft={2}>
           <Text color="gray">{toolOutput}</Text>
         </Box>
       )}
@@ -396,35 +373,28 @@ export function App({ agentLoop, version, modelName, initialPrompt }: AppProps) 
         />
       )}
 
-      {/* Last response — always visible in Ink area */}
-      {lastResponse && !isProcessing && (
-        <Box>
-          <Text color="white" bold>{"◆ "}</Text>
-          <Text>{lastResponse}</Text>
-        </Box>
-      )}
-
-      {/* Activity indicator — always visible during processing */}
-      {isProcessing && (
+      {/* Activity indicator */}
+      {isProcessing && !streamingText && !pendingPermission && (
         <Box>
           <Spinner label={
             phase === "thinking" ? `Thinking...${elapsedStr}`
             : phase === "executing" ? `Running ${executingToolName}...${elapsedStr}`
-            : phase === "responding" ? `Streaming...${elapsedStr}`
             : phase === "tool_calling" ? `Preparing tool call...${elapsedStr}`
             : `Working...${elapsedStr}`
           } />
-          <Text color="gray">  (ESC ESC to interrupt)</Text>
+          <Text color="gray">  (ESC to interrupt)</Text>
         </Box>
       )}
 
       {/* Input */}
-      <Box marginTop={1}>
-        <Input
-          onSubmit={handleSubmit}
-          disabled={isProcessing || !!pendingPermission}
-        />
-      </Box>
+      {!isProcessing && (
+        <Box marginTop={1}>
+          <Input
+            onSubmit={handleSubmit}
+            disabled={isProcessing || !!pendingPermission}
+          />
+        </Box>
+      )}
     </Box>
   );
 }
