@@ -64,8 +64,27 @@ export function detectDegenerate(fullText: string): SanitizeResult["abortReason"
 
 /**
  * Clean final response text (after stream is complete).
- * Strips special tokens and trims whitespace.
+ * Strips special tokens, thinking tags, and trims whitespace.
  */
 export function sanitizeFinalContent(content: string): string {
-  return content.replace(SPECIAL_TOKEN_PATTERN, "").trim();
+  let cleaned = content.replace(SPECIAL_TOKEN_PATTERN, "");
+
+  // Strip <think>...</think> blocks from final content
+  // (thinking was already shown during streaming)
+  cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/g, "");
+
+  // Handle unclosed <think> tag (stream was cut short)
+  cleaned = cleaned.replace(/<think>[\s\S]*$/g, "");
+
+  return cleaned.trim();
+}
+
+/**
+ * Format a streaming chunk for display.
+ * Replaces <think>/<\/think> tags with visual indicators.
+ */
+export function formatThinkingChunk(chunk: string): string {
+  return chunk
+    .replace(/<think>/g, "[thinking] ")
+    .replace(/<\/think>/g, "\n");
 }

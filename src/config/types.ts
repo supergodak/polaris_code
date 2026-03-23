@@ -2,8 +2,8 @@ export interface PolarisConfig {
   llm: {
     apiBase: string;
     model: string;
-    temperature: number;
-    maxTokens: number;
+    temperature?: number;  // undefined = server default
+    maxTokens?: number;    // undefined = server default
   };
   agent: {
     maxIterations: number;
@@ -26,9 +26,9 @@ export interface PolarisConfig {
 const DEFAULTS: PolarisConfig = {
   llm: {
     apiBase: "http://localhost:8080/v1",
-    model: "mlx-community/Qwen2.5-Coder-32B-Instruct-8bit",
-    temperature: 0.1,
-    maxTokens: 4096,
+    model: "mlx-community/Qwen3-32B-8bit",
+    // temperature and maxTokens intentionally omitted — server decides
+    // based on model's tokenizer_config.json. Override in config.json if needed.
   },
   agent: {
     maxIterations: 80,

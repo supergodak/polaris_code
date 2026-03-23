@@ -5,15 +5,15 @@ import type { ChatCompletionTool } from "./types.ts";
 export interface LLMClientConfig {
   apiBase: string;
   model: string;
-  temperature: number;
-  maxTokens: number;
+  temperature?: number;  // undefined = let server decide
+  maxTokens?: number;    // undefined = let server decide
 }
 
 export class LLMClient {
   private client: OpenAI;
   private model: string;
-  private temperature: number;
-  private maxTokens: number;
+  private temperature?: number;
+  private maxTokens?: number;
 
   constructor(config: LLMClientConfig) {
     this.client = new OpenAI({
@@ -33,10 +33,12 @@ export class LLMClient {
     const params: OpenAI.ChatCompletionCreateParams = {
       model: this.model,
       messages: messages as OpenAI.ChatCompletionMessageParam[],
-      temperature: this.temperature,
-      max_tokens: this.maxTokens,
       stream: true,
     };
+
+    // Only send temperature/max_tokens if explicitly configured
+    if (this.temperature !== undefined) params.temperature = this.temperature;
+    if (this.maxTokens !== undefined) params.max_tokens = this.maxTokens;
 
     if (tools && tools.length > 0) {
       params.tools = tools;

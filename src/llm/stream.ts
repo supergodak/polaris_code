@@ -1,5 +1,5 @@
 import type { Message, ToolCall, StreamChunk } from "./types.ts";
-import { sanitizeChunk, detectDegenerate, sanitizeFinalContent } from "./sanitizer.ts";
+import { sanitizeChunk, detectDegenerate, sanitizeFinalContent, formatThinkingChunk } from "./sanitizer.ts";
 
 export interface ParsedResponse {
   content: string | null;
@@ -60,7 +60,9 @@ export async function collectStream(
             break;
           }
 
-          onText?.(cleaned);
+          // Format thinking tags for display
+          const displayText = formatThinkingChunk(cleaned);
+          onText?.(displayText);
         }
         break;
 
