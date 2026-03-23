@@ -4,6 +4,7 @@ import { sanitizeChunk, detectDegenerate, sanitizeFinalContent, formatThinkingCh
 export interface ParsedResponse {
   content: string | null;
   toolCalls: ToolCall[];
+  abortReason?: "repetition_loop" | "max_length_exceeded";
   usage?: {
     prompt_tokens: number;
     completion_tokens: number;
@@ -39,7 +40,7 @@ export async function collectStream(
   let content = "";
   const toolCalls: ToolCall[] = [];
   let usage: ParsedResponse["usage"];
-  let abortedByDegenerate = false;
+  let degenerateReason: ParsedResponse["abortReason"];
 
   for await (const chunk of stream) {
     if (abortSignal?.aborted) break;
@@ -56,7 +57,7 @@ export async function collectStream(
           // Check for degenerate output (loops, max length)
           const reason = detectDegenerate(content);
           if (reason) {
-            abortedByDegenerate = true;
+            degenerateReason = reason;
             break;
           }
 
@@ -86,7 +87,7 @@ export async function collectStream(
         break;
     }
 
-    if (abortedByDegenerate) break;
+    if (degenerateReason) break;
   }
 
   // Fallback: if no tool_calls from API but content contains tool call tags,
@@ -108,6 +109,7 @@ export async function collectStream(
   return {
     content: content || null,
     toolCalls,
+    abortReason: degenerateReason,
     usage,
   };
 }

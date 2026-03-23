@@ -71,7 +71,7 @@ describe("edit_file", () => {
     expect(result.success).toBe(true);
   });
 
-  it("returns diagnostics on fuzzy match", async () => {
+  it("returns clear error with re-read instruction on no match", async () => {
     const file = join(tmpDir, "fuzzy.ts");
     writeFileSync(file, "function hello() {\n  return 'world';\n}\n");
 
@@ -82,10 +82,8 @@ describe("edit_file", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe("EDIT_NO_MATCH");
-    expect(result.diagnostics).toBeDefined();
-    expect(result.diagnostics!.similarity).toBeGreaterThan(0.5);
-    expect(result.diagnostics!.hint).toContain("read_file");
+    expect(result.output).toContain("MUST use read_file");
+    expect(result.output).toContain("old_string not found");
   });
 
   it("returns EDIT_NOT_FOUND for completely different text", async () => {

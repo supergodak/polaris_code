@@ -3,8 +3,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ToolDefinition, ToolResult } from "./types.ts";
 import { validateStringArgs } from "./validate.ts";
-
-const MAX_OUTPUT_LENGTH = 50_000;
+import { truncateOutput } from "./utils.ts";
 
 export const readPdfTool: ToolDefinition = {
   name: "read_pdf",
@@ -65,13 +64,7 @@ export const readPdfTool: ToolDefinition = {
           return;
         }
 
-        let output = chunks.join("");
-        if (output.length > MAX_OUTPUT_LENGTH) {
-          output = output.slice(0, MAX_OUTPUT_LENGTH) +
-            `\n\n[OUTPUT TRUNCATED: ${output.length} chars total, showing first ${MAX_OUTPUT_LENGTH}]`;
-        }
-
-        const lineCount = output.split("\n").length;
+        const output = truncateOutput(chunks.join(""));
         resolve({
           success: true,
           output: output || "(empty PDF)",

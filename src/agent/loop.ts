@@ -5,7 +5,7 @@ import type { ToolRegistry } from "../tools/index.ts";
 import type { ToolResult } from "../tools/types.ts";
 import type { LLMClient } from "../llm/client.ts";
 import type { Logger } from "../logging/logger.ts";
-import { collectStream, repairJSON } from "../llm/stream.ts";
+import { collectStream } from "../llm/stream.ts";
 import { pruneMessages } from "./context-manager.ts";
 import { buildSystemPrompt } from "./prompt.ts";
 import { postEditVerify } from "../tools/post-edit-verify.ts";
@@ -144,6 +144,17 @@ export class AgentLoop extends EventEmitter {
         toolCalls = result.toolCalls;
 
         this.logger.llmRequest(prunedMessages, result.usage, Date.now() - startTime);
+
+        // Degenerate output detected — stop with explicit warning
+        if (result.abortReason) {
+          const reason = result.abortReason === "repetition_loop"
+            ? "Output was repeating. The model may be stuck in a loop."
+            : "Output exceeded maximum length.";
+          const partial = content ? `\n\nPartial output:\n${content.slice(0, 500)}` : "";
+          this.logger.warn("degenerate_output", { reason: result.abortReason });
+          this.setState({ type: "idle" });
+          return `[WARNING: ${reason}]${partial}`;
+        }
       } catch (e) {
         if (signal.aborted) {
           this.setState({ type: "idle" });
@@ -233,30 +244,24 @@ export class AgentLoop extends EventEmitter {
       };
     }
 
-    // Parse arguments
+    // Parse arguments — no silent repair; give clear error feedback
     let args: Record<string, unknown>;
     try {
       args = JSON.parse(tc.function.arguments);
     } catch (parseError) {
-      // Try to repair JSON
-      const repaired = repairJSON(tc.function.arguments);
-      if (repaired) {
-        args = JSON.parse(repaired);
-        this.logger.info("json_repaired", { tool: toolName, original: tc.function.arguments });
-      } else {
-        this.logger.warn("json_parse_error", {
-          tool: toolName,
-          raw: tc.function.arguments.slice(0, 500),
-          error: String(parseError),
-        });
-        return {
-          success: false,
-          output: `Your tool call had invalid JSON. Error: ${parseError instanceof Error ? parseError.message : String(parseError)}. ` +
-            `The raw output was: ${tc.function.arguments.slice(0, 200)}. ` +
-            `Please call the tool again with valid JSON.`,
-          error: "INVALID_JSON",
-        };
-      }
+      this.logger.warn("json_parse_error", {
+        tool: toolName,
+        raw: tc.function.arguments.slice(0, 500),
+        error: String(parseError),
+      });
+      return {
+        success: false,
+        output: `ERROR: Your tool call for '${toolName}' had invalid JSON arguments.\n` +
+          `Parse error: ${parseError instanceof Error ? parseError.message : String(parseError)}\n` +
+          `Your output was: ${tc.function.arguments.slice(0, 300)}\n` +
+          `You MUST re-read the file or re-check your data, then call the tool again with valid JSON.`,
+        error: "INVALID_JSON",
+      };
     }
 
     // Validate required arguments against tool schema

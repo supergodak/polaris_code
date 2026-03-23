@@ -65,26 +65,30 @@ export function App({ agentLoop, version, modelName, initialPrompt, askCallback 
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [isProcessing]);
 
+  // Single function to finalize streaming text → log
+  const finalizeStreaming = useCallback(() => {
+    setStreamingText((prev) => {
+      if (prev.trim()) appendLog("assistant", prev.trim());
+      return "";
+    });
+  }, [appendLog]);
+
   // Agent state handler
   useEffect(() => {
     const handle = (state: AgentState) => {
       switch (state.type) {
         case "idle":
           setPhase("idle");
-          setStreamingText("");
+          finalizeStreaming();
           setToolOutput("");
           break;
         case "thinking":
           setPhase("thinking");
-          // Finalize streaming text to log
-          setStreamingText((prev) => {
-            if (prev.trim()) appendLog("assistant", prev.trim());
-            return "";
-          });
+          finalizeStreaming();
           break;
         case "reasoning":
+          finalizeStreaming();
           appendLog("assistant", state.content);
-          setStreamingText("");
           break;
         case "tool_calling":
           setStreamingText("");
@@ -178,8 +182,8 @@ export function App({ agentLoop, version, modelName, initialPrompt, askCallback 
           "Include: project overview, tech stack, directory structure, build/test commands, coding conventions. " +
           "Use the write_file tool to create the file.",
         );
+        finalizeStreaming();
         appendLog("assistant", result);
-        setStreamingText("");
         setIsProcessing(false);
         return;
       }
@@ -222,21 +226,14 @@ export function App({ agentLoop, version, modelName, initialPrompt, askCallback 
   useInput((_input, key) => {
     if (key.escape && isProcessing) {
       const now = Date.now();
+      agentLoop.abort();
+      finalizeStreaming();
+      setPhase("idle");
+      setIsProcessing(false);
       if (now - lastEscRef.current < 500) {
-        agentLoop.abort();
-        setStreamingText("");
-        setPhase("idle");
-        setIsProcessing(false);
         appendLog("system", "(interrupted by user)");
         lastEscRef.current = 0;
       } else {
-        agentLoop.abort();
-        setStreamingText((prev) => {
-          if (prev.trim()) appendLog("assistant", prev.trim());
-          return "";
-        });
-        setPhase("idle");
-        setIsProcessing(false);
         lastEscRef.current = now;
       }
     }

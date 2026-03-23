@@ -3,9 +3,9 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 import type { ToolDefinition, ToolResult } from "./types.ts";
 import { validateStringArgs } from "./validate.ts";
+import { killProcessGroup, truncateOutput } from "./utils.ts";
 
 const SCRATCH_DIR = "/tmp/polaris-scratch";
-const MAX_OUTPUT_LENGTH = 50_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
@@ -107,37 +107,34 @@ function executeScript(command: string, timeout: number, tool?: ToolDefinition):
       detached: true,
     });
 
-    const killProcessGroup = () => {
-      try {
-        if (child.pid) process.kill(-child.pid, "SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
-      }
-    };
+    let killed = false;
+    const onOutput = tool?.onOutput;
 
     if (tool) {
-      tool.abort = () => { killed = true; killProcessGroup(); };
+      tool.abort = () => { killed = true; killProcessGroup(child); };
     }
 
     const chunks: string[] = [];
-    let killed = false;
 
     const timer = setTimeout(() => {
       killed = true;
-      killProcessGroup();
+      killProcessGroup(child);
     }, timeout);
 
-    child.stdout?.on("data", (data: Buffer) => chunks.push(data.toString("utf-8")));
-    child.stderr?.on("data", (data: Buffer) => chunks.push(data.toString("utf-8")));
+    child.stdout?.on("data", (data: Buffer) => {
+      const text = data.toString("utf-8");
+      chunks.push(text);
+      onOutput?.(text);
+    });
+    child.stderr?.on("data", (data: Buffer) => {
+      const text = data.toString("utf-8");
+      chunks.push(text);
+      onOutput?.(text);
+    });
 
     child.on("close", (code) => {
       clearTimeout(timer);
-      let output = chunks.join("");
-
-      if (output.length > MAX_OUTPUT_LENGTH) {
-        output = output.slice(0, MAX_OUTPUT_LENGTH) +
-          `\n[TRUNCATED: ${output.length} chars total]`;
-      }
+      const output = truncateOutput(chunks.join(""));
 
       if (killed) {
         resolve({ success: false, output, error: `Script timed out after ${timeout}ms` });

@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import type { ToolDefinition, ToolResult } from "./types.ts";
 import { validateStringArgs } from "./validate.ts";
+import { killProcessGroup, truncateOutput } from "./utils.ts";
 
 const DEFAULT_TIMEOUT_MS = 120_000; // 2 minutes
-const MAX_OUTPUT_LENGTH = 50_000;
 const SHELL = process.env.SHELL || "/bin/sh";
 
 export const bashTool: ToolDefinition = {
@@ -34,30 +34,19 @@ export const bashTool: ToolDefinition = {
         cwd,
         stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env },
-        detached: true, // Create process group for clean kill
+        detached: true,
       });
 
-      const killProcessGroup = () => {
-        try {
-          if (child.pid) process.kill(-child.pid, "SIGKILL");
-        } catch {
-          child.kill("SIGKILL"); // Fallback
-        }
-      };
-
-      // Allow external abort (ESC ESC) to kill this process group
-      this.abort = () => {
-        killed = true;
-        killProcessGroup();
-      };
-
-      const chunks: string[] = [];
       let killed = false;
+
+      this.abort = () => { killed = true; killProcessGroup(child); };
 
       const timer = setTimeout(() => {
         killed = true;
-        killProcessGroup();
+        killProcessGroup(child);
       }, timeout);
+
+      const chunks: string[] = [];
 
       child.stdout?.on("data", (data: Buffer) => {
         const text = data.toString("utf-8");
@@ -73,25 +62,12 @@ export const bashTool: ToolDefinition = {
 
       child.on("close", (code) => {
         clearTimeout(timer);
-        let output = chunks.join("");
-
-        if (output.length > MAX_OUTPUT_LENGTH) {
-          output = output.slice(0, MAX_OUTPUT_LENGTH) +
-            `\n\n[OUTPUT TRUNCATED: ${output.length} chars total, showing first ${MAX_OUTPUT_LENGTH}]`;
-        }
+        const output = truncateOutput(chunks.join(""));
 
         if (killed) {
-          resolve({
-            success: false,
-            output,
-            error: `Command timed out after ${timeout}ms`,
-          });
+          resolve({ success: false, output, error: `Command timed out after ${timeout}ms` });
         } else if (code !== 0) {
-          resolve({
-            success: false,
-            output,
-            error: `Exit code ${code}`,
-          });
+          resolve({ success: false, output, error: `Exit code ${code}` });
         } else {
           resolve({ success: true, output: output || "(no output)" });
         }
@@ -99,11 +75,7 @@ export const bashTool: ToolDefinition = {
 
       child.on("error", (e) => {
         clearTimeout(timer);
-        resolve({
-          success: false,
-          output: "",
-          error: `Spawn error: ${e.message}`,
-        });
+        resolve({ success: false, output: "", error: `Spawn error: ${e.message}` });
       });
     });
   },

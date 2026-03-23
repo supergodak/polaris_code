@@ -65,28 +65,18 @@ export const editFileTool: ToolDefinition = {
       };
     }
 
-    // Step 3: Fuzzy match
+    // Step 3: No match — give clear error, don't guess
+    // Force AI to re-read the file instead of retrying blindly
     const fuzzyResult = findFuzzyMatch(lines, oldString);
-    if (fuzzyResult) {
-      const diagnostics: EditDiagnostics = {
-        closest_match: fuzzyResult.text,
-        similarity: fuzzyResult.similarity,
-        line_range: [fuzzyResult.startLine + 1, fuzzyResult.endLine + 1],
-        hint: `Did you mean the content at lines ${fuzzyResult.startLine + 1}-${fuzzyResult.endLine + 1}? ` +
-          `Try read_file with start_line=${Math.max(1, fuzzyResult.startLine - 1)}, ` +
-          `end_line=${fuzzyResult.endLine + 3} to see the exact content, then retry.`,
-      };
-      return {
-        success: false,
-        output: "No exact match found for old_string.",
-        error: "EDIT_NO_MATCH",
-        diagnostics,
-      };
-    }
+    const lineHint = fuzzyResult
+      ? `\nA similar block exists at lines ${fuzzyResult.startLine + 1}-${fuzzyResult.endLine + 1} (${Math.round(fuzzyResult.similarity * 100)}% match).`
+      : "";
 
     return {
       success: false,
-      output: "No match found. The specified text does not exist in the file.",
+      output: `ERROR: old_string not found in file. Your old_string does not match any content exactly.${lineHint}\n` +
+        `You MUST use read_file to re-read the current file content before retrying. ` +
+        `Do NOT guess or modify old_string without reading the file first.`,
       error: "EDIT_NOT_FOUND",
     };
   },
