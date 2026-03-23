@@ -27,8 +27,8 @@ const DEFAULTS: PolarisConfig = {
   llm: {
     apiBase: "http://localhost:8080/v1",
     model: "mlx-community/Qwen2.5-Coder-32B-Instruct-8bit",
-    // temperature and maxTokens intentionally omitted — server decides
-    // based on model's tokenizer_config.json. Override in config.json if needed.
+    // temperature: undefined — let server use model's default
+    maxTokens: 8192, // Agent needs long outputs for multi-step reasoning
   },
   agent: {
     maxIterations: 80,

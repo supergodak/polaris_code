@@ -17,6 +17,7 @@ import { globTool } from "./tools/glob.ts";
 import { grepTool } from "./tools/grep.ts";
 import { bashTool } from "./tools/bash.ts";
 import { runScriptTool } from "./tools/run-script.ts";
+import { readPdfTool } from "./tools/read-pdf.ts";
 import { createAskUserTool } from "./tools/ask-user.ts";
 import type { UserInteraction } from "./agent/types.ts";
 import { saveSession, loadSession, loadLatestSession } from "./agent/session.ts";
@@ -130,6 +131,7 @@ registry.register(globTool);
 registry.register(grepTool);
 registry.register(bashTool);
 registry.register(runScriptTool);
+registry.register(readPdfTool);
 registry.register(createAskUserTool(interaction));
 
 // Register memory tools
