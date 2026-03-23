@@ -1,79 +1,59 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Box, Text, useApp, useInput } from "ink";
+import { Box, Text, Static, useApp, useInput } from "ink";
 import { Input } from "./Input.tsx";
 import { Spinner } from "./Spinner.tsx";
-import { ToolCallDisplay } from "./ToolCall.tsx";
 import { Permission } from "./Permission.tsx";
 import type { AgentLoop } from "../agent/loop.ts";
 import type { AgentState } from "../agent/types.ts";
-import chalk from "chalk";
-import { marked } from "marked";
-import TerminalRenderer from "marked-terminal";
-
-// Configure marked for terminal output
-marked.setOptions({
-  renderer: new TerminalRenderer({ tab: 2 }) as any,
-});
 
 interface AppProps {
   agentLoop: AgentLoop;
   version: string;
   modelName: string;
   initialPrompt?: string;
-  askCallback?: AskCallback;
+  askCallback?: { resolveAsk: (answer: string) => void };
 }
 
-function logAssistant(text: string): void {
-  const rendered = marked.parse(text, { async: false }) as string;
-  // Remove trailing newlines from marked output
-  const cleaned = rendered.replace(/\n+$/, "");
-  process.stdout.write(`${chalk.white.bold("◆ ")}${cleaned}\n`);
-}
-
-interface ToolCallEntry {
-  id: string;
-  name: string;
-  args: Record<string, unknown>;
-  status: "running" | "done" | "error";
-  result?: string;
-}
-
-interface PendingPermission {
-  toolName: string;
-  args: Record<string, unknown>;
-  resolve: (approved: boolean) => void;
-}
-
-interface AskCallback {
-  resolveAsk: (answer: string) => void;
+/** A single line of output in the scrollback log */
+interface OutputLine {
+  id: number;
+  type: "header" | "user" | "assistant" | "tool" | "system";
+  text: string;
 }
 
 export function App({ agentLoop, version, modelName, initialPrompt, askCallback }: AppProps) {
   const { exit } = useApp();
+
+  // Scrollback log — Static renders each item once, never re-renders
+  const [log, setLog] = useState<OutputLine[]>([]);
+  const idRef = useRef(0);
+
+  const appendLog = useCallback((type: OutputLine["type"], text: string) => {
+    setLog((prev) => [...prev, { id: ++idRef.current, type, text }]);
+  }, []);
+
+  // Active state — only these are in the dynamic Ink area
   const [isProcessing, setIsProcessing] = useState(false);
-  const [phase, setPhase] = useState<"idle" | "thinking" | "responding" | "tool_calling" | "executing" | "awaiting_input">("idle");
+  const [phase, setPhase] = useState<"idle" | "thinking" | "responding" | "executing" | "awaiting_input">("idle");
   const [executingToolName, setExecutingToolName] = useState("");
-  const [streamingText, setStreamingText] = useState(""); // Live streaming content
-  const [toolOutput, setToolOutput] = useState(""); // Real-time tool output
-  const [toolHistory, setToolHistory] = useState<ToolCallEntry[]>([]);
-  const [pendingPermission, setPendingPermission] = useState<PendingPermission | null>(null);
-  const [pendingQuestion, setPendingQuestion] = useState("");
+  const [streamingText, setStreamingText] = useState("");
+  const [toolOutput, setToolOutput] = useState("");
+  const [pendingPermission, setPendingPermission] = useState<{
+    toolName: string; args: Record<string, unknown>; resolve: (b: boolean) => void;
+  } | null>(null);
   const [elapsed, setElapsed] = useState(0);
-  const [mode, setMode] = useState<"execute" | "plan">("execute");
-  const [contextInfo, setContextInfo] = useState<{ tokens: number; maxTokens: number } | null>(null);
-  const [contextPruned, setContextPruned] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Write header to stdout once at startup
-  const headerWritten = useRef(false);
+  // Write header once
+  const headerDone = useRef(false);
   useEffect(() => {
-    if (!headerWritten.current) {
-      headerWritten.current = true;
-      process.stdout.write(`\n${chalk.magenta.bold("Polaris")} ${chalk.gray(`v${version}`)} ${chalk.gray(`(${modelName})`)}\n\n`);
+    if (!headerDone.current) {
+      headerDone.current = true;
+      appendLog("header", `Polaris v${version} (${modelName})`);
     }
   }, []);
 
-  // Elapsed time counter
+  // Elapsed timer
   useEffect(() => {
     if (isProcessing) {
       setElapsed(0);
@@ -82,65 +62,61 @@ export function App({ agentLoop, version, modelName, initialPrompt, askCallback 
       if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [isProcessing]);
 
-  // Counter to generate unique IDs for tool calls
-  const toolIdCounter = useRef(0);
-
+  // Agent state handler
   useEffect(() => {
-    const handleState = (state: AgentState) => {
+    const handle = (state: AgentState) => {
       switch (state.type) {
         case "idle":
           setPhase("idle");
-          setExecutingToolName("");
           setStreamingText("");
+          setToolOutput("");
           break;
         case "thinking":
-          // Flush completed tool history to stdout before next iteration
-          setToolHistory((prev) => {
-            for (const tc of prev) {
-              const icon = tc.status === "done" ? chalk.green("✓") : tc.status === "error" ? chalk.red("✗") : chalk.yellow("⟳");
-              const argsStr = Object.entries(tc.args)
-                .map(([k, v]) => `${k}=${typeof v === "string" ? `"${v.length > 40 ? v.slice(0, 40) + "..." : v}"` : JSON.stringify(v)}`)
-                .join(" ");
-              process.stdout.write(`  ${icon} ${chalk.yellow(tc.name)}: ${chalk.gray(argsStr)}\n`);
-              if (tc.result) {
-                const preview = tc.result.split("\n")[0]?.slice(0, 80) ?? "";
-                const lineCount = tc.result.split("\n").length;
-                const suffix = lineCount > 1 ? chalk.gray(` (+${lineCount - 1} lines)`) : "";
-                process.stdout.write(`    ${chalk.gray(preview)}${suffix}\n`);
-              }
-            }
-            return [];
-          });
           setPhase("thinking");
-          setStreamingText("");
-          break;
-        case "reasoning":
-          // Reasoning was already shown during streaming.
-          // Clear Ink, then write clean version to scrollback.
+          // Finalize streaming text to log
           setStreamingText((prev) => {
-            // Only write to stdout if content is substantively different
-            // from what was already streamed (avoid duplication)
-            if (!prev || prev.trim() !== state.content.trim()) {
-              logAssistant(state.content);
-            }
+            if (prev.trim()) appendLog("assistant", prev.trim());
             return "";
           });
           break;
-        case "tool_calling": {
-          const id = `tc-${++toolIdCounter.current}`;
-          setToolHistory((prev) => [
-            ...prev.map((t) => t.status === "running" ? { ...t, status: "done" as const } : t),
-            { id, name: state.toolName, args: state.args, status: "running" as const },
-          ]);
-          setPhase("tool_calling");
+        case "reasoning":
+          appendLog("assistant", state.content);
           setStreamingText("");
           break;
+        case "tool_calling":
+          setStreamingText("");
+          {
+            const argsStr = Object.entries(state.args)
+              .map(([k, v]) => `${k}=${typeof v === "string" ? `"${v.length > 50 ? v.slice(0, 50) + "..." : v}"` : JSON.stringify(v)}`)
+              .join(" ");
+            appendLog("tool", `⟳ ${state.toolName}: ${argsStr}`);
+          }
+          break;
+        case "tool_result": {
+          const icon = state.success ? "✓" : "✗";
+          const preview = state.result.split("\n")[0]?.slice(0, 80) ?? "";
+          const lines = state.result.split("\n").length;
+          const suffix = lines > 1 ? ` (+${lines - 1} lines)` : "";
+          appendLog("tool", `${icon} ${state.toolName}: ${preview}${suffix}`);
+          break;
         }
+        case "executing":
+          setPhase("executing");
+          setExecutingToolName(state.toolName);
+          setToolOutput("");
+          if (state.toolName === "ask_user") {
+            setPhase("awaiting_input");
+          }
+          break;
+        case "tool_output":
+          setToolOutput((prev) => {
+            const combined = prev + state.chunk;
+            return combined.length > 2000 ? combined.slice(-2000) : combined;
+          });
+          break;
         case "awaiting_permission":
           setPendingPermission({
             toolName: state.toolName,
@@ -148,180 +124,91 @@ export function App({ agentLoop, version, modelName, initialPrompt, askCallback 
             resolve: state.resolve,
           });
           break;
-        case "executing":
-          setPhase("executing");
-          setExecutingToolName(state.toolName);
-          setToolOutput("");
-          // ask_user needs user input — show input prompt
-          if (state.toolName === "ask_user") {
-            setPhase("awaiting_input");
-            // Extract question from tool history
-            setToolHistory((prev) => {
-              const last = prev[prev.length - 1];
-              if (last && last.name === "ask_user") {
-                const q = last.args.question as string ?? "";
-                setPendingQuestion(q);
-                process.stdout.write(`${chalk.cyan("? ")}${chalk.bold(q)}\n`);
-              }
-              return prev;
-            });
-          }
-          break;
-        case "tool_result":
-          setToolHistory((prev) => {
-            // Find the last tool with matching name and update it
-            const idx = [...prev].reverse().findIndex((t) => t.name === state.toolName);
-            if (idx === -1) return prev;
-            const realIdx = prev.length - 1 - idx;
-            const updated = [...prev];
-            updated[realIdx] = {
-              ...updated[realIdx]!,
-              status: state.success ? "done" as const : "error" as const,
-              result: state.result,
-            };
-            return updated;
-          });
-          break;
-        case "tool_output":
-          setToolOutput((prev) => {
-            const combined = prev + state.chunk;
-            // Keep last 2000 chars to avoid memory issues
-            return combined.length > 2000 ? combined.slice(-2000) : combined;
-          });
-          break;
         case "responding":
           setPhase("responding");
-          if (state.content) {
-            setStreamingText(state.content);
-          }
+          if (state.content) setStreamingText(state.content);
           break;
       }
     };
 
-    const handleMode = (m: string) => setMode(m as "plan" | "execute");
-
-    const handleContext = (info: { tokens: number; maxTokens: number; pruned: boolean; tokensBefore: number }) => {
-      setContextInfo({ tokens: info.tokens, maxTokens: info.maxTokens });
-      if (info.pruned) {
-        setContextPruned(true);
-        setTimeout(() => setContextPruned(false), 5000);
-      }
-    };
-
-    agentLoop.on("state", handleState);
-    agentLoop.on("mode", handleMode);
-    agentLoop.on("context", handleContext);
-    return () => {
-      agentLoop.off("state", handleState);
-      agentLoop.off("mode", handleMode);
-      agentLoop.off("context", handleContext);
-    };
-  }, [agentLoop]);
+    agentLoop.on("state", handle);
+    return () => { agentLoop.off("state", handle); };
+  }, [agentLoop, appendLog]);
 
   // Auto-submit initial prompt
-  const initialPromptSent = useRef(false);
+  const initDone = useRef(false);
   useEffect(() => {
-    if (initialPrompt && !initialPromptSent.current) {
-      initialPromptSent.current = true;
+    if (initialPrompt && !initDone.current) {
+      initDone.current = true;
       handleSubmit(initialPrompt);
     }
   }, [initialPrompt]);
 
   const handleSubmit = useCallback(async (text: string) => {
-    // Slash commands
     if (text.startsWith("/")) {
       const cmd = text.slice(1).toLowerCase().trim();
-      if (cmd === "quit" || cmd === "exit") {
-        exit();
-        return;
-      }
-      if (cmd === "clear") {
-        return;
-      }
+      if (cmd === "quit" || cmd === "exit") { exit(); return; }
+      if (cmd === "clear") { setLog([]); return; }
       if (cmd === "help") {
-        logAssistant("Commands: /plan, /do, /init, /compact, /quit, /clear, /help, /memory");
-        return;
-      }
-      if (cmd === "init") {
-        setLastUserInput(text);
-        // (response will be written to stdout when complete)
-        setIsProcessing(true);
-        setToolHistory([]);
-        const result = await agentLoop.run(
-          "Analyze this project's structure and create a `.polaris/instructions.md` file with project-specific instructions for the AI agent. " +
-          "Include: project overview, tech stack, directory structure, build/test commands, coding conventions. " +
-          "Use the write_file tool to create the file.",
-        );
-        setStreamingText("");
-        setToolHistory([]);
-        logAssistant(result);
-        setIsProcessing(false);
+        appendLog("system", "Commands: /plan, /do, /init, /compact, /quit, /clear, /help, /memory");
         return;
       }
       if (cmd === "plan") {
         agentLoop.setPlanMode(true);
-        logAssistant("Plan mode: read-only. Use /do to switch to execution mode.");
+        appendLog("system", "Plan mode: read-only. Use /do to switch to execution mode.");
         return;
       }
       if (cmd === "do" || cmd === "execute") {
         agentLoop.setPlanMode(false);
-        logAssistant("Execution mode: all tools available.");
+        appendLog("system", "Execution mode: all tools available.");
         return;
       }
       if (cmd === "compact") {
         setIsProcessing(true);
         const { before, after } = await agentLoop.compact();
-        logAssistant(`Context compacted: ${Math.round(before / 1000)}k → ${Math.round(after / 1000)}k tokens`);
+        appendLog("system", `Context compacted: ${Math.round(before / 1000)}k → ${Math.round(after / 1000)}k tokens`);
+        setIsProcessing(false);
+        return;
+      }
+      if (cmd === "init") {
+        appendLog("user", text);
+        setIsProcessing(true);
+        const result = await agentLoop.run(
+          "Analyze this project's structure and create a `.polaris/instructions.md` file with project-specific instructions for the AI agent. " +
+          "Include: project overview, tech stack, directory structure, build/test commands, coding conventions. " +
+          "Use the write_file tool to create the file.",
+        );
+        appendLog("assistant", result);
+        setStreamingText("");
         setIsProcessing(false);
         return;
       }
       if (cmd === "memory") {
-        setLastUserInput(text);
-        // (response will be written to stdout when complete)
+        appendLog("user", text);
         setIsProcessing(true);
         const result = await agentLoop.run("List all saved memories");
-        logAssistant(result);
+        appendLog("assistant", result);
         setIsProcessing(false);
         return;
       }
     }
 
-    process.stdout.write(`\n${chalk.bgGray.cyan.bold(` ❯ ${text} `)}\n`);
+    appendLog("user", text);
     setIsProcessing(true);
     setStreamingText("");
-    setToolHistory([]);
 
     const result = await agentLoop.run(text);
 
-    // Flush remaining tool history to stdout
-    setToolHistory((prev) => {
-      for (const tc of prev) {
-        const icon = tc.status === "done" ? chalk.green("✓") : tc.status === "error" ? chalk.red("✗") : chalk.yellow("⟳");
-        const argsStr = Object.entries(tc.args)
-          .map(([k, v]) => `${k}=${typeof v === "string" ? `"${v.length > 40 ? v.slice(0, 40) + "..." : v}"` : JSON.stringify(v)}`)
-          .join(" ");
-        process.stdout.write(`  ${icon} ${chalk.yellow(tc.name)}: ${chalk.gray(argsStr)}\n`);
-        if (tc.result) {
-          const preview = tc.result.split("\n")[0]?.slice(0, 80) ?? "";
-          const lineCount = tc.result.split("\n").length;
-          const suffix = lineCount > 1 ? chalk.gray(` (+${lineCount - 1} lines)`) : "";
-          process.stdout.write(`    ${chalk.gray(preview)}${suffix}\n`);
-        }
-      }
-      return [];
-    });
-
     setStreamingText("");
-    logAssistant(result);
+    appendLog("assistant", result);
     setIsProcessing(false);
-  }, [agentLoop, exit]);
+  }, [agentLoop, exit, appendLog]);
 
   const handleAskResponse = useCallback((answer: string) => {
-    process.stdout.write(`${chalk.gray(`  → ${answer}`)}\n`);
-    setPendingQuestion("");
+    appendLog("system", `→ ${answer}`);
     setPhase("executing");
     askCallback?.resolveAsk(answer);
-  }, [askCallback]);
+  }, [askCallback, appendLog]);
 
   const handlePermission = useCallback((approved: boolean) => {
     if (pendingPermission) {
@@ -330,33 +217,25 @@ export function App({ agentLoop, version, modelName, initialPrompt, askCallback 
     }
   }, [pendingPermission]);
 
-  // ESC interrupt: 1st ESC = soft interrupt (stop streaming, show partial),
-  //                2nd ESC within 500ms = hard interrupt (kill tools + abort loop)
+  // ESC interrupt
   const lastEscRef = useRef<number>(0);
-
   useInput((_input, key) => {
     if (key.escape && isProcessing) {
       const now = Date.now();
       if (now - lastEscRef.current < 500) {
-        // 2nd ESC — hard abort: kill subprocesses and stop loop
         agentLoop.abort();
         setStreamingText("");
-        setToolHistory([]);
         setPhase("idle");
-        setExecutingToolName("");
         setIsProcessing(false);
-        logAssistant("(interrupted by user)");
+        appendLog("system", "(interrupted by user)");
         lastEscRef.current = 0;
       } else {
-        // 1st ESC — soft abort: stop LLM streaming, show partial response
         agentLoop.abort();
-        if (streamingText) {
-          if (streamingText) logAssistant(streamingText);
-        }
-        setStreamingText("");
-        setToolHistory([]);
+        setStreamingText((prev) => {
+          if (prev.trim()) appendLog("assistant", prev.trim());
+          return "";
+        });
         setPhase("idle");
-        setExecutingToolName("");
         setIsProcessing(false);
         lastEscRef.current = now;
       }
@@ -365,31 +244,34 @@ export function App({ agentLoop, version, modelName, initialPrompt, askCallback 
 
   const elapsedStr = elapsed > 0 ? ` (${elapsed}s)` : "";
 
-  // Ink dynamic area: ONLY the currently active element + input
   return (
     <Box flexDirection="column">
-      {/* Currently running tool */}
-      {toolHistory.length > 0 && (
-        <Box flexDirection="column">
-          {toolHistory.filter((tc) => tc.status === "running").map((tc) => (
-            <ToolCallDisplay
-              key={tc.id}
-              name={tc.name}
-              args={tc.args}
-              status={tc.status}
-            />
-          ))}
-        </Box>
-      )}
+      {/* Scrollback — each item rendered once, never re-rendered */}
+      <Static items={log}>
+        {(item) => (
+          <Box key={item.id}>
+            {item.type === "header" && (
+              <Text color="magenta" bold>{item.text}</Text>
+            )}
+            {item.type === "user" && (
+              <Text backgroundColor="#333333" color="cyan" bold>{` ❯ ${item.text} `}</Text>
+            )}
+            {item.type === "assistant" && (
+              <Text><Text color="white" bold>{"◆ "}</Text>{item.text}</Text>
+            )}
+            {item.type === "tool" && (
+              <Text color="gray">{"  "}{item.text}</Text>
+            )}
+            {item.type === "system" && (
+              <Text color="yellow">{item.text}</Text>
+            )}
+          </Box>
+        )}
+      </Static>
 
-      {/* Real-time tool output */}
-      {toolOutput && phase === "executing" && (
-        <Box marginLeft={2}>
-          <Text color="gray">{toolOutput}</Text>
-        </Box>
-      )}
+      {/* === Dynamic area (minimal) === */}
 
-      {/* Live streaming response */}
+      {/* Live streaming */}
       {streamingText && (
         <Box>
           <Text color="white" bold>{"◆ "}</Text>
@@ -398,7 +280,14 @@ export function App({ agentLoop, version, modelName, initialPrompt, askCallback 
         </Box>
       )}
 
-      {/* Permission dialog */}
+      {/* Tool output */}
+      {toolOutput && phase === "executing" && (
+        <Box marginLeft={2}>
+          <Text color="gray">{toolOutput}</Text>
+        </Box>
+      )}
+
+      {/* Permission */}
       {pendingPermission && (
         <Permission
           toolName={pendingPermission.toolName}
@@ -407,20 +296,19 @@ export function App({ agentLoop, version, modelName, initialPrompt, askCallback 
         />
       )}
 
-      {/* Activity indicator */}
+      {/* Spinner */}
       {isProcessing && !streamingText && !pendingPermission && (
         <Box>
           <Spinner label={
             phase === "thinking" ? `Thinking...${elapsedStr}`
             : phase === "executing" ? `Running ${executingToolName}...${elapsedStr}`
-            : phase === "tool_calling" ? `Preparing tool call...${elapsedStr}`
             : `Working...${elapsedStr}`
           } />
           <Text color="gray">  (ESC to interrupt)</Text>
         </Box>
       )}
 
-      {/* Input: shown when idle OR when ask_user is waiting for response */}
+      {/* Input */}
       {(!isProcessing || phase === "awaiting_input") && (
         <Box marginTop={1}>
           <Input
