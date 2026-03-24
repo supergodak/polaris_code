@@ -87,8 +87,8 @@ export function App({ agentLoop, version, modelName, initialPrompt, askCallback 
           finalizeStreaming();
           break;
         case "reasoning":
+          // streaming text already contains this content — just finalize it
           finalizeStreaming();
-          appendLog("assistant", state.content);
           break;
         case "tool_calling":
           setStreamingText("");
@@ -183,15 +183,13 @@ export function App({ agentLoop, version, modelName, initialPrompt, askCallback 
           "Use the write_file tool to create the file.",
         );
         finalizeStreaming();
-        appendLog("assistant", result);
         setIsProcessing(false);
         return;
       }
       if (cmd === "memory") {
         appendLog("user", text);
         setIsProcessing(true);
-        const result = await agentLoop.run("List all saved memories");
-        appendLog("assistant", result);
+        await agentLoop.run("List all saved memories");
         setIsProcessing(false);
         return;
       }
@@ -201,10 +199,9 @@ export function App({ agentLoop, version, modelName, initialPrompt, askCallback 
     setIsProcessing(true);
     setStreamingText("");
 
-    const result = await agentLoop.run(text);
+    await agentLoop.run(text);
 
-    setStreamingText("");
-    appendLog("assistant", result);
+    // Response is already logged by finalizeStreaming() via idle state transition
     setIsProcessing(false);
   }, [agentLoop, exit, appendLog]);
 
